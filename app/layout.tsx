@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Source_Serif_4, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
+import AuthHeader from "@/lib/auth/AuthHeader";
 import "./globals.css";
 
 const sourceSerif4 = Source_Serif_4({
@@ -70,20 +71,7 @@ export default function RootLayout({
                 </Link>
               </nav>
             </div>
-            <div className="flex items-center space-x-4 text-sm">
-              <Link
-                href="/login"
-                className="text-ink-muted hover:text-ink transition-colors"
-              >
-                Masuk
-              </Link>
-              <Link
-                href="/register"
-                className="border border-border px-3 py-1.5 rounded hover:bg-black/5 transition-colors"
-              >
-                Daftar
-              </Link>
-            </div>
+            <AuthHeader />
           </div>
         </header>
 
