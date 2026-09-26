@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-paper: #FAF8F2;
+  --color-ink: #1B2430;
+  --color-ink-muted: #5B6472;
+  --color-seal: #B08D2F;
+  --color-seal-dark: #8A6E22;
+  --color-valid: #2F6B4F;
+  --color-valid-bg: #E7F1EB;
+  --color-invalid: #A23B32;
+  --color-invalid-bg: #F6E8E6;
+  --color-border: #D8D2C4;
+  --radius: 4px;
+}
+
+body {
+  background-color: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-ibm-plex-sans), 'IBM Plex Sans', sans-serif;
+}
+
+h1, h2 {
+  font-family: var(--font-source-serif-4), 'Source Serif 4', serif;
+}
+
+.font-mono-data {
+  font-family: var(--font-ibm-plex-mono), 'IBM Plex Mono', monospace;
+}

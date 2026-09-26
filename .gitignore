@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Testing / Coverage
+coverage/
+
+# Next.js build output
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+
+# Environment files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# Cryptographic keys & secrets (Dilarang commit file kunci/rahasia)
+*.pem
+*.key
+*.pkcs8
+*.p8
+*.crt
+*.cert
+*.der
+*.pfx
+*.p12
+
+# Panduan & Konteks Tugas (Design Guide & Project Context)
+DESIGN_GUIDE*.md
+DESIGN_GUIDE .md
+PROJECT_CONTEXT*.md
+PROJECT_CONTEXT .md
+Design Guide*
+Project Context*
+
+# IDE & OS files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
