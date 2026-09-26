@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/auth/session";
+import { isSupabaseConfigured, supabase } from "@/lib/auth/session";
 
 /**
  * Halaman Masuk (Login)
@@ -27,6 +27,14 @@ export default function LoginPage() {
     setErrorMessage("");
     setLoading(true);
 
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMessage(
+        "Konfigurasi Supabase belum lengkap. Isi NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY di .env.local"
+      );
+      setLoading(false);
+      return;
+    }
+
     try {
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
@@ -34,13 +42,19 @@ export default function LoginPage() {
       });
 
       if (error) {
-        setErrorMessage(error.message || "Gagal masuk. Periksa kembali email dan kata sandi Anda.");
+        // Pesan generik: tidak membocorkan email mana yang terdaftar.
+        setErrorMessage("Email atau kata sandi salah.");
         setLoading(false);
         return;
       }
 
       if (data.session) {
         router.push("/dashboard");
+      } else {
+        setErrorMessage(
+          "Berhasil masuk, tetapi sesi tidak terbentuk. Silakan coba lagi."
+        );
+        setLoading(false);
       }
     } catch (err: unknown) {
       if (err instanceof Error) {

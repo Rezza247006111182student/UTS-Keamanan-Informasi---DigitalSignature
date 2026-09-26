@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { supabase } from "@/lib/auth/session";
+import { isSupabaseConfigured, supabase } from "@/lib/auth/session";
 
 /**
  * Halaman Pendaftaran (Register)
@@ -49,8 +49,21 @@ export default function RegisterPage() {
 
     setLoading(true);
 
+    if (!isSupabaseConfigured || !supabase) {
+      setErrorMessage(
+        "Konfigurasi Supabase belum lengkap. Isi NEXT_PUBLIC_SUPABASE_URL dan NEXT_PUBLIC_SUPABASE_ANON_KEY di .env.local"
+      );
+      setLoading(false);
+      return;
+    }
+
     try {
-      // 1. Daftarkan akun baru ke Supabase Auth
+      // 1. Daftarkan akun baru ke Supabase Auth.
+      //    Metadata di bawah dipakai oleh trigger handle_new_user() di
+      //    lib/db/schema.sql untuk otomatis membuat baris tabel public.users.
+      //    Alasannya: saat email confirmation aktif, signUp belum
+      //    menghasilkan sesi sehingga insert profil dari client akan
+      //    ditolak RLS.
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -69,30 +82,30 @@ export default function RegisterPage() {
         return;
       }
 
-      const user = authData.user;
-      if (user) {
-        // 2. Simpan / Sinkronkan profil ke tabel public.users
-        const { error: profileError } = await supabase.from("users").upsert({
-          id: user.id,
-          email,
-          full_name: fullName,
-          institution,
-          role,
-          // Catatan: Kunci privat & publik akan dibangkitkan dan dienkripsi
-          // bersama Anggota A pada tahap integrasi (Hari ke-4).
-        });
-
-        if (profileError) {
-          console.warn("Sinkronisasi tabel users:", profileError.message);
-        }
-
-        setSuccessMessage(
-          "Pendaftaran berhasil! Akun Anda telah dibuat. Silakan masuk untuk mulai menggunakan aplikasi."
+      if (!authData.user) {
+        setErrorMessage(
+          "Pendaftaran tidak menghasilkan data pengguna. Silakan coba lagi."
         );
+        setLoading(false);
+        return;
+      }
 
+      // Bila session langsung terbentuk, email confirmation tidak aktif dan
+      // user bisa langsung masuk. Bila tidak, user wajib konfirmasi email dulu.
+      if (authData.session) {
+        setSuccessMessage(
+          "Pendaftaran berhasil! Akun Anda sudah siap. Mengalihkan ke halaman masuk..."
+        );
         setTimeout(() => {
           router.push("/login");
-        }, 2500);
+        }, 1500);
+      } else {
+        setSuccessMessage(
+          "Pendaftaran berhasil! Silakan cek email Anda untuk melakukan konfirmasi, lalu masuk melalui halaman masuk."
+        );
+        setTimeout(() => {
+          router.push("/login");
+        }, 4000);
       }
     } catch (err: unknown) {
       if (err instanceof Error) {
