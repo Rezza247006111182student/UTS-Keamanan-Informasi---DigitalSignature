@@ -42,8 +42,22 @@ export default function LoginPage() {
       });
 
       if (error) {
-        // Pesan generik: tidak membocorkan email mana yang terdaftar.
-        setErrorMessage("Email atau kata sandi salah.");
+        const msg = error.message.toLowerCase();
+        // Kasus paling sering saat development: email belum dikonfirmasi.
+        // Supabase membalas "Email not confirmed" (400), tapi UI lama
+        // menutupinya dengan "Email atau kata sandi salah" sehingga user
+        // tidak tahu harus cek inbox.
+        if (msg.includes("email not confirmed")) {
+          setErrorMessage(
+            "Email Anda belum dikonfirmasi. Cek inbox (dan folder spam) untuk link konfirmasi, atau matikan Confirm email di Supabase Dashboard → Authentication → Providers → Email."
+          );
+        } else if (msg.includes("invalid login credentials")) {
+          setErrorMessage("Email atau kata sandi salah.");
+        } else {
+          // Fallback: tampilkan pesan asli Supabase supaya tidak ada kasus
+          // yang tertutup pesan generik lagi.
+          setErrorMessage(error.message);
+        }
         setLoading(false);
         return;
       }
