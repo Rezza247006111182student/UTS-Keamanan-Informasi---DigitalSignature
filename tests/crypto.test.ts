@@ -341,5 +341,91 @@ describe("Integrasi Modul A (Kriptografi Inti) & Modul C (QR-Code & Verifikasi)"
   });
 });
 
+describe("Pengayaan Hari 6: Fitur Multi-Signer (Penandatanganan Berulang & Banyak Pihak)", () => {
+  it("test_multi_signer_dokumen_sama_ditandatangani_dua_kunci_berbeda", () => {
+    // 1. Dokumen yang sama ditandatangani oleh Dosen Pembimbing dan Dekan
+    const docBuffer = Buffer.from("Surat Keputusan Yudisium Bersama No: 102/UNSIL/2026");
+    const docHash = hashDocument(docBuffer);
+
+    // Signer 1: Pembimbing
+    const keyPairPembimbing = generateKeyPair();
+    const sigPembimbing = signDocumentHash(docHash, keyPairPembimbing.privateKey);
+
+    // Signer 2: Dekan
+    const keyPairDekan = generateKeyPair();
+    const sigDekan = signDocumentHash(docHash, keyPairDekan.privateKey);
+
+    // Pastikan kedua signature berbeda karena menggunakan pasangan kunci Ed25519 yang berbeda
+    expect(sigPembimbing).not.toBe(sigDekan);
+
+    // Verifikasi masing-masing tanda tangan terhadap public key masing-masing
+    expect(verifySignature(docHash, sigPembimbing, keyPairPembimbing.publicKey)).toBe(true);
+    expect(verifySignature(docHash, sigDekan, keyPairDekan.publicKey)).toBe(true);
+
+    // Cross-verification harus GAGAL (tanda tangan Pembimbing tidak boleh valid dengan public key Dekan)
+    expect(verifySignature(docHash, sigPembimbing, keyPairDekan.publicKey)).toBe(false);
+    expect(verifySignature(docHash, sigDekan, keyPairPembimbing.publicKey)).toBe(false);
+  });
+
+  it("test_multi_signer_api_verify_memvalidasi_seluruh_penandatangan", async () => {
+    const docHash = hashDocument(Buffer.from("Dokumen Akreditasi Multi-Signer"));
+    const signer1 = generateKeyPair();
+    const signer2 = generateKeyPair();
+
+    const sig1 = signDocumentHash(docHash, signer1.privateKey);
+    const sig2 = signDocumentHash(docHash, signer2.privateKey);
+
+    const req = new NextRequest("http://localhost:3000/api/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hash: docHash,
+        signatures: [sig1, sig2],
+        publicKeys: [signer1.publicKey, signer2.publicKey],
+        signers: [
+          { signerName: "Dr. Pembimbing", role: "Pembimbing", institution: "UNSIL", date: "2026-09-27" },
+          { signerName: "Prof. Dekan", role: "Dekan", institution: "UNSIL", date: "2026-09-27" },
+        ],
+      }),
+    });
+
+    const res = await verifyRoute(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.valid).toBe(true);
+    expect(json.signers).toHaveLength(2);
+    expect(json.signers[0].signerName).toBe("Dr. Pembimbing");
+    expect(json.signers[1].signerName).toBe("Prof. Dekan");
+  });
+
+  it("test_multi_signer_api_verify_menolak_jika_salah_satu_signature_palsu", async () => {
+    const docHash = hashDocument(Buffer.from("Dokumen Kontrak Perusahaan"));
+    const signer1 = generateKeyPair();
+    const signer2 = generateKeyPair();
+
+    const validSig = signDocumentHash(docHash, signer1.privateKey);
+    const fakeSig = Buffer.from("signature-palsu-pihak-kedua").toString("base64");
+
+    const req = new NextRequest("http://localhost:3000/api/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hash: docHash,
+        signatures: [validSig, fakeSig],
+        publicKeys: [signer1.publicKey, signer2.publicKey],
+      }),
+    });
+
+    const res = await verifyRoute(req);
+    expect(res.status).toBe(200);
+
+    const json = await res.json();
+    expect(json.valid).toBe(false);
+    expect(json.reason).toContain("tidak valid");
+  });
+});
+
+
 
 

@@ -111,42 +111,48 @@ export async function POST(req: NextRequest) {
       }
 
       // Ambil encrypted_private_key dan profil dari tabel public.users
-      const { data: profile, error: profileError } = await userClient
+      const { data: profile } = await userClient
         .from("users")
-        .select("encrypted_private_key, full_name, role, institution")
+        .select("encrypted_private_key, public_key, full_name, role, institution")
         .eq("id", user.id)
         .single();
 
-      if (profileError || !profile?.encrypted_private_key) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              "Kunci privat Anda belum ditemukan di database. Pastikan registrasi/pembuatan kunci telah selesai.",
-          },
-          { status: 404 }
-        );
-      }
+      signerName = signerName ?? profile?.full_name ?? undefined;
+      signerRole = signerRole ?? profile?.role ?? undefined;
+      signerInstitution = signerInstitution ?? profile?.institution ?? undefined;
 
-      signerName = signerName ?? profile.full_name ?? undefined;
-      signerRole = signerRole ?? profile.role ?? undefined;
-      signerInstitution = signerInstitution ?? profile.institution ?? undefined;
+      if (!profile?.encrypted_private_key) {
+        // Auto-provisioning: akun ini belum memiliki pasangan kunci di DB
+        // Bangkitkan pasangan kunci Ed25519 baru dan enkripsi dengan passphrase user
+        const newKeyPair = generateKeyPair();
+        const encrypted = encryptPrivateKey(newKeyPair.privateKey, passphrase);
 
-      try {
-        activePrivateKey = decryptPrivateKey(
-          profile.encrypted_private_key,
-          passphrase
-        );
-      } catch (decryptErr) {
-        return NextResponse.json(
-          {
-            success: false,
-            error:
-              (decryptErr as Error).message ||
-              "Passphrase salah untuk membuka kunci privat akun Anda",
-          },
-          { status: 401 }
-        );
+        await userClient
+          .from("users")
+          .update({
+            public_key: newKeyPair.publicKey,
+            encrypted_private_key: encrypted,
+          })
+          .eq("id", user.id);
+
+        activePrivateKey = newKeyPair.privateKey;
+      } else {
+        try {
+          activePrivateKey = decryptPrivateKey(
+            profile.encrypted_private_key,
+            passphrase
+          );
+        } catch (decryptErr) {
+          return NextResponse.json(
+            {
+              success: false,
+              error:
+                (decryptErr as Error).message ||
+                "Passphrase salah untuk membuka kunci privat akun Anda",
+            },
+            { status: 401 }
+          );
+        }
       }
     } else {
       return NextResponse.json(
@@ -165,6 +171,35 @@ export async function POST(req: NextRequest) {
     // Bersihkan referensi private key dari memori segera setelah proses signing
     activePrivateKey = "";
 
+    // Multi-signer: Catat tanda tangan ini ke tabel document_signatures bila documentId tersedia
+    if (body.documentId && typeof body.documentId === "string") {
+      const authHeader = req.headers.get("Authorization") ?? "";
+      const token = authHeader.startsWith("Bearer ")
+        ? authHeader.slice("Bearer ".length).trim()
+        : null;
+      if (token) {
+        const userClient = createUserScopedServerClient(token);
+        if (userClient) {
+          const { data: authUser } = await userClient.auth.getUser();
+          if (authUser?.user) {
+            await userClient
+              .from("document_signatures")
+              .upsert(
+                {
+                  document_id: body.documentId,
+                  signer_id: authUser.user.id,
+                  signature,
+                  signer_name: signerName ?? "Penandatangan",
+                  signer_role: signerRole ?? "Signer",
+                  institution: signerInstitution ?? "",
+                },
+                { onConflict: "document_id,signer_id" }
+              );
+          }
+        }
+      }
+    }
+
     return NextResponse.json({
       success: true,
       signature,
@@ -173,6 +208,7 @@ export async function POST(req: NextRequest) {
       role: signerRole ?? "Signer",
       institution: signerInstitution ?? "",
     });
+
   } catch (error) {
     return NextResponse.json(
       {
