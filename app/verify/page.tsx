@@ -28,6 +28,14 @@
 
 import { useState, useRef, useCallback } from "react";
 
+// ─── Helper: hash file dengan Web Crypto API (untuk mode PDF) ─────────────────
+async function hashFileSHA256(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest("SHA-256", buffer);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 // ─── Tipe ─────────────────────────────────────────────────────────────────────
 
 type VerifyMode = "pdf" | "qr";
@@ -238,28 +246,28 @@ export default function VerifyPage() {
     setResult(null);
 
     try {
+      // Hash file PDF dihitung di client dan dikirim ke server
+      // supaya server bisa cross-check dengan hash yang di-sign Modul A
+      let documentHash: string | undefined;
+      if (mode === "pdf") {
+        documentHash = await hashFileSHA256(file);
+      }
+
       const formData = new FormData();
       formData.append("file", file);
       formData.append("mode", mode);
+      if (documentHash) formData.append("documentHash", documentHash);
 
-      const res = await fetch("/api/verify", {
+      // Arahkan ke /api/documents/verify (Modul C) yang menghandle
+      // ekstraksi QR dari file sebelum memanggil verifySignature Modul A
+      const res = await fetch("/api/documents/verify", {
         method: "POST",
         body: formData,
       });
 
-      // /api/verify masih belum diimplementasikan Modul A (501) — tangani gracefully
-      if (res.status === 501) {
-        setStatus("error");
-        setResult({
-          valid: false,
-          reason: "Endpoint verifikasi (Modul A) belum selesai diimplementasikan. Coba lagi setelah integrasi.",
-        });
-        return;
-      }
-
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `Verifikasi gagal (${res.status})`);
+        throw new Error(body.reason ?? body.error ?? `Verifikasi gagal (${res.status})`);
       }
 
       const body: VerifyResult = await res.json();
