@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { signDocumentHash } from "@/lib/crypto/sign";
 import { decryptPrivateKey } from "@/lib/keystore/decryptPrivateKey";
 import { createUserScopedServerClient } from "@/lib/auth/session";
+import { generateKeyPair } from "@/lib/crypto/keygen";
+import { encryptPrivateKey } from "@/lib/keystore/encryptPrivateKey";
 
 /**
  * API Route: /api/sign
