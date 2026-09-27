@@ -135,6 +135,139 @@ export async function getCurrentUser(): Promise<CurrentUser | null> {
 }
 
 /**
+ * Status kunci digital milik user yang sedang login.
+ * Dibaca dari GET /api/auth (server yang menilai kolom public_key &
+ * encrypted_private_key), supaya halaman register/login/sign (Modul B/C)
+ * bisa membedakan "belum punya kunci" dari error lain tanpa membaca
+ * ciphertext apa pun di client.
+ */
+export interface KeyStatus {
+  hasKey: boolean;
+  hasPublicKey: boolean;
+  hasEncryptedKey: boolean;
+}
+
+export async function fetchKeyStatus(): Promise<
+  KeyStatus & { error?: string }
+> {
+  const empty: KeyStatus = {
+    hasKey: false,
+    hasPublicKey: false,
+    hasEncryptedKey: false,
+  };
+  if (!supabase) {
+    return { ...empty, error: "Supabase belum dikonfigurasi." };
+  }
+  const token = await getAccessToken();
+  if (!token) {
+    return { ...empty, error: "Tidak ada sesi aktif." };
+  }
+  try {
+    const res = await fetch("/api/auth", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      user?: Partial<KeyStatus>;
+      error?: string;
+    };
+    if (!res.ok || !body.user) {
+      return { ...empty, error: body.error ?? "Gagal memeriksa status kunci." };
+    }
+    const hasPublicKey = body.user.hasPublicKey === true;
+    const hasEncryptedKey = body.user.hasEncryptedKey === true;
+    return {
+      hasPublicKey,
+      hasEncryptedKey,
+      hasKey: hasPublicKey && hasEncryptedKey,
+    };
+  } catch (err) {
+    return {
+      ...empty,
+      error: err instanceof Error ? err.message : "Gagal memeriksa status kunci.",
+    };
+  }
+}
+
+export interface ProvisionResult {
+  success: boolean;
+  /** True bila kunci baru dibuat; false bila sudah ada sebelumnya. */
+  created: boolean;
+  /** True bila gagal karena generateKeyPair (Modul A) belum tersedia. */
+  keygenUnavailable?: boolean;
+  error?: string;
+}
+
+/**
+ * Membuatkan kunci digital untuk user yang sedang login.
+ *
+ * Alur: client mengirim passphrase + access token ke
+ * POST /api/auth { action: "provision-key" }; server membangkitkan kunci
+ * via kontrak generateKeyPair() (Modul A), mengenkripsi via
+ * encryptPrivateKey() (Modul B), menyimpan ke tabel users, lalu membuang
+ * passphrase dari memori. Passphrase tidak pernah disimpan di database.
+ *
+ * Idempotent: bila user sudah punya kunci, server mengembalikan
+ * success dengan created: false tanpa mengubah apa pun.
+ */
+export async function provisionUserKeys(
+  passphrase: string
+): Promise<ProvisionResult> {
+  if (!supabase) {
+    return {
+      success: false,
+      created: false,
+      error: "Supabase belum dikonfigurasi.",
+    };
+  }
+  if (!passphrase || passphrase.length < 8) {
+    return {
+      success: false,
+      created: false,
+      error: "Passphrase minimal 8 karakter.",
+    };
+  }
+  const token = await getAccessToken();
+  if (!token) {
+    return {
+      success: false,
+      created: false,
+      error: "Tidak ada sesi aktif. Masuk terlebih dahulu.",
+    };
+  }
+  try {
+    const res = await fetch("/api/auth", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ action: "provision-key", passphrase }),
+    });
+    const body = (await res.json().catch(() => ({}))) as {
+      success?: boolean;
+      created?: boolean;
+      error?: string;
+      code?: string;
+    };
+    if (!res.ok || body.success !== true) {
+      return {
+        success: false,
+        created: false,
+        keygenUnavailable: body.code === "KEYGEN_UNAVAILABLE" || res.status === 501,
+        error: body.error ?? "Gagal membuat kunci digital.",
+      };
+    }
+    return { success: true, created: body.created !== false };
+  } catch (err) {
+    return {
+      success: false,
+      created: false,
+      error: err instanceof Error ? err.message : "Gagal membuat kunci digital.",
+    };
+  }
+}
+
+/**
  * Keluar dari akun (menghapus sesi di browser).
  * Sengaja tidak menghapus apa pun di database — profil dan tanda tangan
  * milik user tetap tersimpan.

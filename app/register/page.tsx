@@ -3,7 +3,11 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { isSupabaseConfigured, supabase } from "@/lib/auth/session";
+import {
+  isSupabaseConfigured,
+  provisionUserKeys,
+  supabase,
+} from "@/lib/auth/session";
 
 /**
  * Halaman Pendaftaran (Register)
@@ -93,15 +97,37 @@ export default function RegisterPage() {
       // Bila session langsung terbentuk, email confirmation tidak aktif dan
       // user bisa langsung masuk. Bila tidak, user wajib konfirmasi email dulu.
       if (authData.session) {
-        setSuccessMessage(
-          "Pendaftaran berhasil! Akun Anda sudah siap. Mengalihkan ke halaman masuk..."
-        );
+        // Integrasi Hari-4 (keygen A -> enkripsi B -> simpan DB): buatkan
+        // kunci digital sekarang juga memakai passphrase dari form ini.
+        // Passphrase diteruskan ke POST /api/auth provision-key dan dibuang
+        // server setelah dipakai; tidak pernah disimpan.
+        const provision = await provisionUserKeys(passphrase);
+        if (provision.success && provision.created) {
+          setSuccessMessage(
+            "Pendaftaran berhasil! Kunci digital Anda sudah dibuat dan tersimpan terenkripsi. Mengalihkan ke halaman masuk..."
+          );
+        } else if (provision.success && !provision.created) {
+          setSuccessMessage(
+            "Pendaftaran berhasil! Akun Anda sudah siap (kunci digital sudah ada). Mengalihkan ke halaman masuk..."
+          );
+        } else if (provision.keygenUnavailable) {
+          setSuccessMessage(
+            "Pendaftaran berhasil! Akun Anda sudah siap. Layanan pembuatan kunci (Modul A) belum aktif, jadi kunci digital belum dibuat — Anda bisa membuatnya nanti dari halaman Masuk. Mengalihkan..."
+          );
+        } else {
+          setSuccessMessage(
+            `Pendaftaran berhasil, tetapi kunci digital gagal dibuat: ${provision.error ?? "kesalahan tidak dikenal"} Simpan passphrase Anda baik-baik — kunci bisa dibuat ulang dari halaman Masuk. Mengalihkan...`
+          );
+        }
+        // Buang passphrase dari memori browser sesegera mungkin.
+        setPassphrase("");
+        setConfirmPassphrase("");
         setTimeout(() => {
           router.push("/login");
-        }, 1500);
+        }, 2000);
       } else {
         setSuccessMessage(
-          "Pendaftaran berhasil! Silakan cek email Anda untuk melakukan konfirmasi, lalu masuk melalui halaman masuk."
+          "Pendaftaran berhasil! Silakan cek email Anda untuk melakukan konfirmasi, lalu masuk melalui halaman masuk. Siapkan passphrase kunci di atas — kunci digital Anda akan dibuat saat pertama masuk."
         );
         setTimeout(() => {
           router.push("/login");
