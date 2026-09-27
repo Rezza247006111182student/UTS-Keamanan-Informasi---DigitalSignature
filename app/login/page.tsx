@@ -3,7 +3,12 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { isSupabaseConfigured, supabase } from "@/lib/auth/session";
+import {
+  fetchKeyStatus,
+  isSupabaseConfigured,
+  provisionUserKeys,
+  supabase,
+} from "@/lib/auth/session";
 
 /**
  * Halaman Masuk (Login)
@@ -21,6 +26,13 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [infoMessage, setInfoMessage] = useState("");
+  // User lama yang registered sebelum integrasi keygen -> belum punya kunci.
+  // Tampilkan panel pembuatan kunci (backfill) alih-alih langsung redirect.
+  const [needsKey, setNeedsKey] = useState(false);
+  const [keyPassphrase, setKeyPassphrase] = useState("");
+  const [keyConfirm, setKeyConfirm] = useState("");
+  const [provisioning, setProvisioning] = useState(false);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -63,7 +75,20 @@ export default function LoginPage() {
       }
 
       if (data.session) {
-        router.push("/dashboard");
+        // Cek apakah user sudah punya kunci digital. User yang daftar
+        // sebelum integrasi keygen punya profil tanpa encrypted_private_key
+        // — tanpa cek ini mereka baru gagal nanti saat sign dengan pesan
+        // "Kunci privat Anda belum ditemukan di database".
+        const status = await fetchKeyStatus();
+        if (status.hasKey) {
+          router.push("/dashboard");
+        } else {
+          setNeedsKey(true);
+          setInfoMessage(
+            "Akun Anda belum memiliki kunci digital (misalnya karena mendaftar sebelum fitur pembuatan kunci aktif). Buat kunci sekarang dengan passphrase — passphrase hanya dipakai sesaat untuk enkripsi dan tidak pernah disimpan."
+          );
+          setLoading(false);
+        }
       } else {
         setErrorMessage(
           "Berhasil masuk, tetapi sesi tidak terbentuk. Silakan coba lagi."
@@ -81,6 +106,38 @@ export default function LoginPage() {
     }
   };
 
+  const handleProvisionKey = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setErrorMessage("");
+    setInfoMessage("");
+
+    if (keyPassphrase !== keyConfirm) {
+      setErrorMessage("Konfirmasi passphrase tidak cocok.");
+      return;
+    }
+    if (keyPassphrase.length < 8) {
+      setErrorMessage("Passphrase kunci minimal 8 karakter.");
+      return;
+    }
+
+    setProvisioning(true);
+    const result = await provisionUserKeys(keyPassphrase);
+    // Buang passphrase dari memori browser sesegera mungkin.
+    setKeyPassphrase("");
+    setKeyConfirm("");
+    setProvisioning(false);
+
+    if (result.success) {
+      router.push("/dashboard");
+    } else if (result.keygenUnavailable) {
+      setErrorMessage(
+        "Layanan pembuatan kunci (Modul A) belum aktif, jadi kunci belum bisa dibuat. Anda tetap bisa masuk — coba lagi nanti setelah Modul A selesai."
+      );
+    } else {
+      setErrorMessage(result.error ?? "Gagal membuat kunci digital.");
+    }
+  };
+
   return (
     <div className="max-w-2xl py-6">
       <h1 className="text-3xl font-semibold text-ink mb-2">Masuk ke Akun</h1>
@@ -91,6 +148,79 @@ export default function LoginPage() {
       {errorMessage && (
         <div className="mb-6 p-4 rounded bg-invalid-bg text-invalid border border-invalid/30 text-sm">
           {errorMessage}
+        </div>
+      )}
+
+      {infoMessage && (
+        <div className="mb-6 p-4 rounded bg-valid-bg text-valid border border-valid/30 text-sm">
+          {infoMessage}
+        </div>
+      )}
+
+      {needsKey && (
+        <div className="mb-6 border border-border p-6 rounded bg-paper">
+          <h2 className="text-sm font-semibold text-ink mb-1">
+            Buat kunci digital Anda
+          </h2>
+          <p className="text-xs text-ink-muted mb-4 leading-relaxed">
+            Kunci privat akan dibangkitkan dan langsung disimpan terenkripsi
+            (AES-256-GCM). Sistem tidak pernah menyimpan passphrase Anda.
+          </p>
+          <form onSubmit={handleProvisionKey} className="space-y-4">
+            <div>
+              <label
+                htmlFor="keyPassphrase"
+                className="block text-sm font-medium text-ink mb-1.5"
+              >
+                Passphrase kunci (min. 8 karakter)
+              </label>
+              <input
+                id="keyPassphrase"
+                type="password"
+                required
+                minLength={8}
+                value={keyPassphrase}
+                onChange={(e) => setKeyPassphrase(e.target.value)}
+                placeholder="Minimal 8 karakter"
+                className="w-full px-3.5 py-2 border border-border rounded bg-white text-ink text-sm focus:outline-none focus:border-seal transition-colors"
+              />
+            </div>
+            <div>
+              <label
+                htmlFor="keyConfirm"
+                className="block text-sm font-medium text-ink mb-1.5"
+              >
+                Ulangi passphrase kunci
+              </label>
+              <input
+                id="keyConfirm"
+                type="password"
+                required
+                minLength={8}
+                value={keyConfirm}
+                onChange={(e) => setKeyConfirm(e.target.value)}
+                placeholder="Ulangi passphrase"
+                className="w-full px-3.5 py-2 border border-border rounded bg-white text-ink text-sm focus:outline-none focus:border-seal transition-colors"
+              />
+            </div>
+            <div className="flex flex-wrap gap-3 pt-1">
+              <button
+                type="submit"
+                disabled={provisioning}
+                className="px-6 py-2.5 bg-seal hover:bg-seal-dark text-white text-sm font-medium rounded transition-colors disabled:opacity-50"
+              >
+                {provisioning ? "Membuat kunci..." : "Buat kunci digital"}
+              </button>
+              <button
+                type="button"
+                disabled={provisioning}
+                onClick={() => router.push("/dashboard")}
+                className="px-6 py-2.5 border border-border text-ink text-sm font-medium rounded hover:bg-black/5 transition-colors disabled:opacity-50"
+              >
+                Lewati dulu
+              </button>
+            </div>
+          </form>
         </div>
       )}
 

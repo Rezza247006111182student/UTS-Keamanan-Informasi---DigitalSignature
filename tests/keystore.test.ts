@@ -84,6 +84,9 @@ describe("Modul Keamanan Penyimpanan & Auth (Anggota B)", () => {
   // Test 1: Menjamin private key tersimpan di database SELALU dalam bentuk
   // terenkripsi, tidak pernah plaintext.
   // ===========================================================================
+  // Timeout 30 detik: test ini memanggil Supabase Auth + Postgres lewat
+  // jaringan (createUser, 3x query users, deleteUser), sehingga batas default
+  // 5 detik vitest terlalu ketat dan flaky. Bukan kegagalan logika.
   it("test_privatekey_terenkripsi_di_database", async () => {
     ensurePrerequisite(
       "test_privatekey_terenkripsi_di_database",
@@ -203,7 +206,7 @@ describe("Modul Keamanan Penyimpanan & Auth (Anggota B)", () => {
         );
       }
     }
-  });
+  }, 30000);
 
   // ===========================================================================
   // Test 2: Menjamin dekripsi gagal jika passphrase tidak sesuai.
@@ -247,5 +250,5 @@ describe("Modul Keamanan Penyimpanan & Auth (Anggota B)", () => {
     // alasan keliru.
     expect(error!.status).toBe(400);
     expect(error!.message).toMatch(/invalid login credentials/i);
-  });
+  }, 15000);
 });
