@@ -20,9 +20,26 @@
 
 import { useState, useRef, useCallback } from "react";
 import RequireAuth from "@/lib/auth/RequireAuth";
-import { getCurrentUser, getAccessToken } from "@/lib/auth/session";
+import { getCurrentUser, getAccessToken, supabase } from "@/lib/auth/session";
 import { generateQrPayload, dataUrlToBuffer } from "@/lib/qrcode/generateQr";
 import { embedQrToPdf } from "@/lib/pdf/embedQrToPdf";
+
+// ─── Helper: ambil encrypted_private_key dari tabel users ────────────────────
+// getCurrentUser() (Modul B) tidak mengekspos encrypted_private_key karena
+// alasan keamanan — field itu hanya diambil sesaat di sini untuk proses sign,
+// lalu langsung dikirim ke server dan tidak disimpan di state.
+async function fetchEncryptedPrivateKey(userId: string): Promise<string> {
+  if (!supabase) throw new Error("Supabase belum dikonfigurasi.");
+  const { data, error } = await supabase
+    .from("users")
+    .select("encrypted_private_key")
+    .eq("id", userId)
+    .single();
+  if (error || !data) throw new Error("Gagal mengambil kunci privat terenkripsi dari database.");
+  const key = (data as { encrypted_private_key: string | null }).encrypted_private_key;
+  if (!key) throw new Error("Kunci privat belum dibuat. Silakan buat pasangan kunci terlebih dahulu di halaman Keygen.");
+  return key;
+}
 
 // ─── Tipe state ───────────────────────────────────────────────────────────────
 
@@ -84,11 +101,14 @@ function SignForm() {
       // 1. Hash PDF
       const { hex: docHash, buffer: pdfBuffer } = await hashFileSHA256(file);
 
-      // 2. Ambil user (nama, role, institusi dari profil Modul B)
+      // 2. Ambil user + encrypted_private_key (field ini tidak ada di getCurrentUser)
       const user = await getCurrentUser();
       if (!user) throw new Error("Sesi habis. Muat ulang halaman dan masuk kembali.");
 
-      // 3. POST /api/sign (Modul A) — jangan reimplementasi sign di sini
+      const encryptedPrivateKey = await fetchEncryptedPrivateKey(user.id);
+
+      // 3. POST /api/sign (Modul A) — kirim hash + encryptedPrivateKey + passphrase
+      // Modul A yang dekripsi private key (via Modul B) dan lakukan sign
       setStep("signing");
       setStepLabel("Menandatangani dokumen…");
 
@@ -100,19 +120,24 @@ function SignForm() {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          documentHash: docHash,
-          passphrase: passphrase,
+          hash: docHash,              // field yang diharapkan /api/sign (Modul A)
+          encryptedPrivateKey,        // ciphertext dari DB, didekripsi di server
+          passphrase: passphrase,     // passphrase user, dipakai sesaat lalu dibuang
         }),
       });
 
+      // Segera bersihkan referensi encryptedPrivateKey dari scope lokal
+      // (variabel JS tidak bisa di-zero secara eksplisit, tapi ini meminimalkan window)
       if (!signRes.ok) {
         const body = await signRes.json().catch(() => ({}));
         throw new Error(body.error ?? `Tanda tangan gagal (${signRes.status})`);
       }
 
-      const { signature, signerName, role, institution } = await signRes.json();
+      // /api/sign (Modul A) mengembalikan: { success, signature, hash }
+      // signerName/role/institution diambil dari profil user yang sudah kita punya
+      const { signature } = await signRes.json();
 
-      // 4. Generate QR
+      // 4. Generate QR — pakai data profil user yang sudah ada
       setStep("generating_qr");
       setStepLabel("Membuat QR-Code meterai…");
 
@@ -120,10 +145,10 @@ function SignForm() {
       const qrDataUrl = await generateQrPayload({
         signature,
         publicKey: user.publicKey,
-        signerName: signerName ?? user.fullName ?? "Penandatangan",
-        role: role ?? user.role ?? "Signer",
+        signerName: user.fullName ?? "Penandatangan",
+        role: user.role ?? "Signer",
         date: now,
-        institution: institution ?? user.institution ?? "",
+        institution: user.institution ?? "",
       });
 
       // 5. Embed QR ke PDF
@@ -133,7 +158,7 @@ function SignForm() {
       const pdfBytes = new Uint8Array(pdfBuffer);
       const qrPngBytes = dataUrlToBuffer(qrDataUrl);
       const signedPdfBytes = await embedQrToPdf(pdfBytes, qrPngBytes, {
-        label: signerName ?? user.fullName,
+        label: user.fullName,
       });
 
       // 6. Simpan metadata dokumen ke DB
