@@ -32,13 +32,6 @@ dist/
 *.pfx
 *.p12
 
-# Panduan & Konteks Tugas (Design Guide & Project Context)
-DESIGN_GUIDE*.md
-DESIGN_GUIDE .md
-PROJECT_CONTEXT*.md
-PROJECT_CONTEXT .md
-Design Guide*
-Project Context*
 
 # IDE & OS files
 .vscode/

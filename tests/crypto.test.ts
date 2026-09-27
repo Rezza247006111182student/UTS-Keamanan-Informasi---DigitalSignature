@@ -7,7 +7,11 @@ import { encryptPrivateKey } from "../lib/keystore/encryptPrivateKey";
 import { decryptPrivateKey } from "../lib/keystore/decryptPrivateKey";
 import { POST as signRoute } from "../app/api/sign/route";
 import { POST as keygenRoute } from "../app/api/keygen/route";
+import { POST as verifyRoute } from "../app/api/verify/route";
+import { generateQrPayload } from "../lib/qrcode/generateQr";
+import { parseQrPayload } from "../lib/qrcode/parseQr";
 import { NextRequest } from "next/server";
+
 
 
 /**
@@ -222,5 +226,120 @@ describe("Integrasi Modul A (Kriptografi Inti) & Modul B (Keystore)", () => {
     expect(json.error).toBeDefined();
   });
 });
+
+describe("Integrasi Modul A (Kriptografi Inti) & Modul C (QR-Code & Verifikasi)", () => {
+  it("test_verify_gagal_jika_dokumen_diubah_1_byte", () => {
+    const keyPair = generateKeyPair();
+
+    // 1. Dokumen asli
+    const originalDoc = Buffer.from("Dokumen Resmi Kelulusan Mahasiswa NaturalSign 2026");
+    const originalHash = hashDocument(originalDoc);
+
+    // 2. Tandatangani hash asli
+    const signature = signDocumentHash(originalHash, keyPair.privateKey);
+
+    // 3. Verifikasi dokumen asli harus SUKSES (true)
+    expect(verifySignature(originalHash, signature, keyPair.publicKey)).toBe(true);
+
+    // 4. Ubah persis 1 byte pada isi dokumen
+    const tamperedDoc = Buffer.from(originalDoc);
+    tamperedDoc[10] ^= 0x01; // flip 1 bit pada byte ke-10
+    expect(tamperedDoc.equals(originalDoc)).toBe(false);
+
+    // 5. Hash ulang dokumen yang diubah (efek avalanche SHA-256)
+    const tamperedHash = hashDocument(tamperedDoc);
+    expect(tamperedHash).not.toBe(originalHash);
+
+    // 6. Verifikasi harus GAGAL (false)
+    const isValid = verifySignature(tamperedHash, signature, keyPair.publicKey);
+    expect(isValid).toBe(false);
+  });
+
+  it("test_verify_gagal_jika_qr_dipalsukan", async () => {
+    const keyPair = generateKeyPair();
+    const docHash = hashDocument(Buffer.from("Dokumen Ijazah Asli"));
+    const validSignature = signDocumentHash(docHash, keyPair.privateKey);
+
+    // QR asli dibuat dengan signature sah
+    const validQrDataUrl = await generateQrPayload({
+      signature: validSignature,
+      publicKey: keyPair.publicKey,
+      signerName: "Prof. Dr. Ir. Sutrisno",
+      role: "Rektor",
+      date: "2026-09-27",
+      institution: "Universitas Teknologi",
+    });
+
+    const base64Data = validQrDataUrl.split(",")[1];
+    const validQrBuffer = Buffer.from(base64Data, "base64");
+    const parsedValid = parseQrPayload(validQrBuffer);
+    expect(verifySignature(docHash, parsedValid.signature, parsedValid.publicKey)).toBe(true);
+
+    // Pemalsuan QR: Penyerang memanipulasi signature di payload QR
+    const fakeSignature = Buffer.from("signature-palsu-rekayasa-penyerang").toString("base64");
+    const fakeQrDataUrl = await generateQrPayload({
+      signature: fakeSignature,
+      publicKey: keyPair.publicKey,
+      signerName: "Prof. Dr. Ir. Sutrisno",
+      role: "Rektor",
+      date: "2026-09-27",
+      institution: "Universitas Teknologi",
+    });
+
+    const fakeBase64 = fakeQrDataUrl.split(",")[1];
+    const fakeQrBuffer = Buffer.from(fakeBase64, "base64");
+    const parsedFake = parseQrPayload(fakeQrBuffer);
+
+    // Verifikasi hash asli terhadap signature QR palsu WAJIB GAGAL (false)
+    const isFakeValid = verifySignature(docHash, parsedFake.signature, parsedFake.publicKey);
+    expect(isFakeValid).toBe(false);
+  });
+
+  it("test_integrasi_api_verify_json_menghasilkan_status_valid_dan_invalid", async () => {
+    const keyPair = generateKeyPair();
+    const docHash = hashDocument(Buffer.from("Dokumen Uji API Verify"));
+    const signature = signDocumentHash(docHash, keyPair.privateKey);
+
+    // 1. Request valid ke POST /api/verify
+    const validReq = new NextRequest("http://localhost:3000/api/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hash: docHash,
+        signature,
+        publicKey: keyPair.publicKey,
+        signerName: "Budi Santoso",
+        role: "Direktur",
+        institution: "PT Digital Aman",
+      }),
+    });
+
+    const validRes = await verifyRoute(validReq);
+    expect(validRes.status).toBe(200);
+    const validJson = await validRes.json();
+    expect(validJson.valid).toBe(true);
+    expect(validJson.signers).toHaveLength(1);
+    expect(validJson.signers[0].signerName).toBe("Budi Santoso");
+
+    // 2. Request invalid (hash dokumen tidak cocok)
+    const invalidHash = hashDocument(Buffer.from("Dokumen Lain Yang Berbeda"));
+    const invalidReq = new NextRequest("http://localhost:3000/api/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        hash: invalidHash,
+        signature,
+        publicKey: keyPair.publicKey,
+      }),
+    });
+
+    const invalidRes = await verifyRoute(invalidReq);
+    expect(invalidRes.status).toBe(200);
+    const invalidJson = await invalidRes.json();
+    expect(invalidJson.valid).toBe(false);
+    expect(invalidJson.reason).toBeDefined();
+  });
+});
+
 
 
