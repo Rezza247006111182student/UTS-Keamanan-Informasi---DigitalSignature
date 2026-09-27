@@ -147,11 +147,13 @@ export async function POST(req: NextRequest) {
       let docHash = qrData.documentHash || qrData.hash || null;
       let signedAt: string | undefined = undefined;
 
+      let multiSignersList: SignerInfo[] = [];
+
       if (supabase) {
         // Cek tabel document_signatures
         const { data: sigRow } = await supabase
           .from("document_signatures")
-          .select("signed_at, documents(document_hash)")
+          .select("document_id, signed_at, documents(document_hash)")
           .eq("signature", signature)
           .maybeSingle();
 
@@ -160,6 +162,25 @@ export async function POST(req: NextRequest) {
           const doc = sigRow.documents as unknown as { document_hash?: string } | null;
           if (doc?.document_hash) {
             docHash = doc.document_hash;
+          }
+
+          // Multi-signer: Ambil seluruh penandatangan untuk dokumen ini
+          if (sigRow.document_id) {
+            const { data: allSigs } = await supabase
+              .from("document_signatures")
+              .select("signer_name, signer_role, institution, signed_at")
+              .eq("document_id", sigRow.document_id)
+              .order("signed_at", { ascending: true });
+
+            if (allSigs && allSigs.length > 0) {
+              multiSignersList = allSigs.map((s) => ({
+                signerName: s.signer_name || "Penandatangan",
+                role: s.signer_role || "Signer",
+                institution: s.institution || "",
+                date: s.signed_at ? s.signed_at.slice(0, 10) : new Date().toISOString().slice(0, 10),
+                signedAt: s.signed_at,
+              }));
+            }
           }
         }
 
@@ -204,15 +225,18 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const signers: SignerInfo[] = [
-        {
-          signerName: signerName || "Penandatangan",
-          role: role || "Signer",
-          institution: institution || "",
-          date: date || new Date().toISOString().slice(0, 10),
-          signedAt,
-        },
-      ];
+      const signers: SignerInfo[] =
+        multiSignersList.length > 0
+          ? multiSignersList
+          : [
+              {
+                signerName: signerName || "Penandatangan",
+                role: role || "Signer",
+                institution: institution || "",
+                date: date || new Date().toISOString().slice(0, 10),
+                signedAt,
+              },
+            ];
 
       return NextResponse.json({
         valid: true,
@@ -223,6 +247,47 @@ export async function POST(req: NextRequest) {
     // ── Jalur 2: JSON Request (Pemanggilan API terprogram) ─────────────────
     const body = await req.json();
     const hash = (body.hash || body.documentHash) as string | undefined;
+
+    // Multi-signer JSON verification: signatures array + publicKeys array
+    if (Array.isArray(body.signatures) && Array.isArray(body.publicKeys)) {
+      if (!hash) {
+        return NextResponse.json(
+          { success: false, valid: false, reason: "Parameter 'hash' wajib diisi" },
+          { status: 400 }
+        );
+      }
+      if (body.signatures.length !== body.publicKeys.length) {
+        return NextResponse.json(
+          { success: false, valid: false, reason: "Jumlah signatures dan publicKeys harus sama" },
+          { status: 400 }
+        );
+      }
+
+      const checks = body.signatures.map((sig: string, idx: number) =>
+        verifySignature(hash, sig, body.publicKeys[idx])
+      );
+      const allValid = checks.length > 0 && checks.every(Boolean);
+
+      const signersList: SignerInfo[] = Array.isArray(body.signers)
+        ? body.signers
+        : body.signatures.map((_: string, idx: number) => ({
+            signerName: `Penandatangan ${idx + 1}`,
+            role: "Signer",
+            institution: "",
+            date: new Date().toISOString().slice(0, 10),
+          }));
+
+      return NextResponse.json({
+        success: true,
+        valid: allValid,
+        reason: allValid ? undefined : "Satu atau lebih tanda tangan multi-signer tidak valid",
+        message: allValid
+          ? "Semua tanda tangan multi-signer valid dan dokumen asli"
+          : "Satu atau lebih tanda tangan multi-signer tidak valid",
+        signers: allValid ? signersList : undefined,
+      });
+    }
+
     const signature = body.signature as string | undefined;
     const publicKey = body.publicKey as string | undefined;
 
@@ -239,6 +304,7 @@ export async function POST(req: NextRequest) {
     }
 
     const isValid = verifySignature(hash, signature, publicKey);
+
 
     return NextResponse.json({
       success: true,
