@@ -1,11 +1,12 @@
+import RequireAuth from "@/lib/auth/RequireAuth";
+
 /**
  * Halaman Dashboard & Riwayat Dokumen
- * Tanggung Jawab: Anggota C
+ * Tanggung Jawab: Anggota C (konten dokumen), Anggota B (pembatasan akses)
  *
- * TODO: Dikerjakan oleh Anggota C
- * - Tampilkan daftar dokumen yang telah diunggah dan ditandatangani
- * - Status tanda tangan (pending, partially signed, fully signed)
- * - Tautan untuk unduh dokumen ber-QR meterai
+ * Guard RequireAuth ditambahkan Anggota B agar dashboard hanya bisa diakses
+ * setelah login — sesuai RLS di lib/db/schema.sql (anon hanya boleh baca
+ * public_signers). Area placeholder di dalamnya tetap milik Anggota C.
  */
 
 export default function DashboardPage() {
@@ -16,15 +17,20 @@ export default function DashboardPage() {
         Kelola dokumen Anda dan pantau status tanda tangan digital.
       </p>
 
-      {/* Placeholder area kerja Anggota C */}
-      <div className="border border-border p-8 rounded bg-paper text-left">
-        <p className="font-semibold text-ink mb-2">
-          Area Dashboard (Modul C — Anggota C)
-        </p>
-        <p className="text-sm text-ink-muted">
-          // TODO: Dikerjakan oleh Anggota C — Integrasi tabel riwayat dokumen dari Supabase, filter status, dan aksi unduh PDF.
-        </p>
-      </div>
+      <RequireAuth
+        title="Masuk untuk melihat dashboard"
+        description="Dashboard menampilkan dokumen dan status tanda tangan milik Anda. Masuk terlebih dahulu — kunci digital Anda disimpan terenkripsi dan hanya bisa dibuka setelah autentikasi."
+      >
+        {/* Placeholder area kerja Anggota C — tetap tampil hanya saat sudah login */}
+        <div className="border border-border p-8 rounded bg-paper text-left">
+          <p className="font-semibold text-ink mb-2">
+            Area Dashboard (Modul C — Anggota C)
+          </p>
+          <p className="text-sm text-ink-muted">
+            // TODO: Dikerjakan oleh Anggota C — Integrasi tabel riwayat dokumen dari Supabase, filter status, dan aksi unduh PDF.
+          </p>
+        </div>
+      </RequireAuth>
     </div>
   );
 }
