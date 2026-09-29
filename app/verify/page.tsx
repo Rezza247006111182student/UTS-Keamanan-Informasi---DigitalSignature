@@ -26,7 +26,7 @@
  * Halaman ini hanya UI & orkestrasi, tidak reimplementasi kriptografi.
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 
 // ─── Helper: hash file dengan Web Crypto API (untuk mode PDF) ─────────────────
 async function hashFileSHA256(file: File): Promise<string> {
@@ -236,6 +236,23 @@ export default function VerifyPage() {
     [mode]
   );
 
+  // Paste handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+        const pastedFile = e.clipboardData.files[0];
+        // Cek tipe file yang dipaste sesuai mode (PDF atau Image)
+        if (mode === "pdf" && pastedFile.type === "application/pdf") {
+          selectFile(pastedFile);
+        } else if (mode === "qr" && pastedFile.type.startsWith("image/")) {
+          selectFile(pastedFile);
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, [mode]);
+
   // ── Verifikasi ─────────────────────────────────────────────────────────
 
   async function handleVerify(e: React.FormEvent) {
@@ -246,15 +263,40 @@ export default function VerifyPage() {
     setResult(null);
 
     try {
-      // Hash file PDF dihitung di client dan dikirim ke server
-      // supaya server bisa cross-check dengan hash yang di-sign Modul A
       let documentHash: string | undefined;
+      let finalFile: File | Blob = file;
+
       if (mode === "pdf") {
         documentHash = await hashFileSHA256(file);
+      } else if (mode === "qr" && file.type !== "image/png") {
+        // Backend menggunakan pngjs yang HANYA mendukung file PNG.
+        // Konversi gambar (misal screenshot JPEG/WebP) ke PNG via Canvas API di sisi klien.
+        finalFile = await new Promise<Blob>((resolve, reject) => {
+          const img = new Image();
+          const url = URL.createObjectURL(file);
+          img.onload = () => {
+            const canvas = document.createElement("canvas");
+            canvas.width = img.width;
+            canvas.height = img.height;
+            const ctx = canvas.getContext("2d");
+            if (ctx) {
+              ctx.drawImage(img, 0, 0);
+              canvas.toBlob((blob) => {
+                if (blob) resolve(blob);
+                else reject(new Error("Gagal mengkonversi gambar"));
+              }, "image/png");
+            } else {
+              reject(new Error("Gagal memuat canvas"));
+            }
+            URL.revokeObjectURL(url);
+          };
+          img.onerror = () => reject(new Error("File bukan gambar yang valid"));
+          img.src = url;
+        });
       }
 
       const formData = new FormData();
-      formData.append("file", file);
+      formData.append("file", finalFile, file.name.endsWith('.png') ? file.name : 'qr-code.png');
       formData.append("mode", mode);
       if (documentHash) formData.append("documentHash", documentHash);
 
@@ -294,13 +336,23 @@ export default function VerifyPage() {
   // ── Render ─────────────────────────────────────────────────────────────
 
   return (
-    <div className="max-w-2xl py-6">
-      <h1 className="font-serif text-3xl font-semibold text-ink mb-1">
-        Verifikasi Keaslian Dokumen
-      </h1>
-      <p className="text-sm text-ink-muted mb-8">
-        Unggah dokumen PDF atau gambar QR-Code untuk memverifikasi keutuhan dan keaslian tanda tangan digital.
-      </p>
+    <div className="max-w-3xl mx-auto py-10 relative">
+      {/* Background glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl opacity-40"
+        style={{ background: "radial-gradient(circle, rgba(176,141,47,0.2) 0%, transparent 70%)" }}
+      />
+      
+      <div className="text-center mb-10 border-b border-border pb-8">
+        <p className="text-xs font-semibold uppercase tracking-widest text-seal mb-1">Cek Keaslian</p>
+        <h1 className="font-serif text-3xl sm:text-4xl font-semibold text-ink mb-3">
+          Verifikasi Dokumen
+        </h1>
+        <p className="text-sm sm:text-base text-ink-muted max-w-lg mx-auto">
+          Unggah dokumen PDF atau gambar QR-Code untuk memverifikasi keutuhan dan keaslian tanda tangan digital secara instan tanpa perlu akun.
+        </p>
+      </div>
 
       <form onSubmit={handleVerify} className="space-y-6">
 

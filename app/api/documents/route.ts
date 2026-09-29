@@ -189,7 +189,7 @@ export async function POST(req: NextRequest) {
       file_path: file_path.trim(),
       document_hash: document_hash.toLowerCase(),
       created_by: user.id,
-      status: "pending",
+      status: "fully_signed",
     })
     .select()
     .single();

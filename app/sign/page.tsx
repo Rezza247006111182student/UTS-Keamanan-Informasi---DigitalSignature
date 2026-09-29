@@ -18,7 +18,7 @@
  * Guard RequireAuth (Modul B) memastikan hanya user yang login bisa sign.
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import RequireAuth from "@/lib/auth/RequireAuth";
 import { getCurrentUser, getAccessToken, supabase } from "@/lib/auth/session";
 import { generateQrPayload, dataUrlToBuffer } from "@/lib/qrcode/generateQr";
@@ -86,6 +86,22 @@ function SignForm() {
     }
   }, []);
 
+  // Paste handler
+  useEffect(() => {
+    const handlePaste = (e: ClipboardEvent) => {
+      if (e.clipboardData?.files && e.clipboardData.files.length > 0) {
+        const pastedFile = e.clipboardData.files[0];
+        if (pastedFile.type === "application/pdf") {
+          setFile(pastedFile);
+          setResult(null);
+          setErrorMsg(null);
+        }
+      }
+    };
+    window.addEventListener("paste", handlePaste);
+    return () => window.removeEventListener("paste", handlePaste);
+  }, []);
+
   // ── Proses tanda tangan ────────────────────────────────────────────────
 
   async function handleSign(e: React.FormEvent) {
@@ -107,61 +123,9 @@ function SignForm() {
 
       const encryptedPrivateKey = await fetchEncryptedPrivateKey(user.id);
 
-      // 3. POST /api/sign (Modul A) — kirim hash + encryptedPrivateKey + passphrase
-      // Modul A yang dekripsi private key (via Modul B) dan lakukan sign
-      setStep("signing");
-      setStepLabel("Menandatangani dokumen…");
-
+      // 3. Simpan metadata dokumen ke DB DULU agar kita punya documentId
+      // yang akan dipakai oleh /api/sign untuk mencatat signature ke tabel document_signatures
       const token = await getAccessToken();
-      const signRes = await fetch("/api/sign", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify({
-          hash: docHash,              // field yang diharapkan /api/sign (Modul A)
-          encryptedPrivateKey,        // ciphertext dari DB, didekripsi di server
-          passphrase: passphrase,     // passphrase user, dipakai sesaat lalu dibuang
-        }),
-      });
-
-      // Segera bersihkan referensi encryptedPrivateKey dari scope lokal
-      // (variabel JS tidak bisa di-zero secara eksplisit, tapi ini meminimalkan window)
-      if (!signRes.ok) {
-        const body = await signRes.json().catch(() => ({}));
-        throw new Error(body.error ?? `Tanda tangan gagal (${signRes.status})`);
-      }
-
-      // /api/sign (Modul A) mengembalikan: { success, signature, hash }
-      // signerName/role/institution diambil dari profil user yang sudah kita punya
-      const { signature } = await signRes.json();
-
-      // 4. Generate QR — pakai data profil user yang sudah ada
-      setStep("generating_qr");
-      setStepLabel("Membuat QR-Code meterai…");
-
-      const now = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-      const qrDataUrl = await generateQrPayload({
-        signature,
-        publicKey: user.publicKey,
-        signerName: user.fullName ?? "Penandatangan",
-        role: user.role ?? "Signer",
-        date: now,
-        institution: user.institution ?? "",
-      });
-
-      // 5. Embed QR ke PDF
-      setStep("embedding");
-      setStepLabel("Menyematkan QR ke PDF…");
-
-      const pdfBytes = new Uint8Array(pdfBuffer);
-      const qrPngBytes = dataUrlToBuffer(qrDataUrl);
-      const signedPdfBytes = await embedQrToPdf(pdfBytes, qrPngBytes, {
-        label: user.fullName,
-      });
-
-      // 6. Simpan metadata dokumen ke DB
       const docRes = await fetch("/api/documents", {
         method: "POST",
         headers: {
@@ -178,10 +142,112 @@ function SignForm() {
       const docBody = await docRes.json().catch(() => ({}));
       const documentId: string = docBody?.document?.id ?? "";
 
+      if (!docRes.ok || !documentId) {
+        throw new Error(docBody.error ?? "Gagal menyimpan dokumen ke database.");
+      }
+
+      // 4. POST /api/sign (Modul A) — kirim hash + encryptedPrivateKey + passphrase + documentId
+      // Modul A yang dekripsi private key (via Modul B), lakukan sign, dan simpan ke document_signatures
+      setStep("signing");
+      setStepLabel("Menandatangani dokumen…");
+
+      const signRes = await fetch("/api/sign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          hash: docHash,
+          encryptedPrivateKey,
+          passphrase,
+          documentId,
+          signerName: user.fullName,
+          signerRole: user.role,
+          signerInstitution: user.institution,
+        }),
+      });
+
+      if (!signRes.ok) {
+        const body = await signRes.json().catch(() => ({}));
+        throw new Error(body.error ?? `Tanda tangan gagal (${signRes.status})`);
+      }
+
+      const { signature } = await signRes.json();
+
+      // 5. Generate QR
+      setStep("generating_qr");
+      setStepLabel("Membuat QR-Code meterai…");
+
+      const now = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      const qrData = {
+        signature,
+        publicKey: user.publicKey,
+        signerName: user.fullName ?? "Penandatangan",
+        role: user.role ?? "Signer",
+        date: now,
+        institution: user.institution ?? "",
+      };
+      const qrJsonPayload = JSON.stringify(qrData);
+      const qrDataUrl = await generateQrPayload(qrData);
+
+      // 6. Embed QR ke PDF
+      setStep("embedding");
+      setStepLabel("Menyematkan QR ke PDF…");
+
+      const pdfBytes = new Uint8Array(pdfBuffer);
+      const qrPngBytes = dataUrlToBuffer(qrDataUrl);
+      const signedPdfBytes = await embedQrToPdf(pdfBytes, qrPngBytes, {
+        label: user.fullName,
+        qrPayloadJson: qrJsonPayload,
+      });
+
+      // 7. Update qr_payload di DB + upload PDF ke Supabase Storage
+      setStepLabel("Menyimpan dokumen…");
+
+      // Update qr_payload di document_signatures
+      if (token && documentId) {
+        await fetch("/api/documents/update-payload", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            documentId,
+            qrPayload: qrJsonPayload,
+          }),
+        }).catch(() => { /* non-critical */ });
+
+        // Upload signed PDF ke Supabase Storage
+        if (supabase) {
+          const storagePath = `${user.id}/${documentId}.pdf`;
+          await supabase.storage
+            .from("documents")
+            .upload(storagePath, new Blob([signedPdfBytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" }), {
+              upsert: true,
+            })
+            .catch(() => { /* non-critical, user sudah punya file lokal */ });
+
+          // Update file_path di tabel documents agar dashboard bisa download
+          await fetch("/api/documents/update-path", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              documentId,
+              filePath: storagePath,
+            }),
+          }).catch(() => { /* non-critical */ });
+        }
+      }
+
       setResult({ qrDataUrl, signedPdfBytes, documentId });
       setStep("done");
       setStepLabel("");
-      setPassphrase(""); // Bersihkan passphrase dari state secepatnya
+      setPassphrase("");
     } catch (err) {
       setStep("error");
       setStepLabel("");
@@ -397,13 +463,23 @@ function SignForm() {
 
 export default function SignPage() {
   return (
-    <div className="max-w-2xl py-6">
-      <h1 className="font-serif text-3xl font-semibold text-ink mb-1">
-        Tanda Tangani Dokumen
-      </h1>
-      <p className="text-sm text-ink-muted mb-8">
-        Unggah dokumen PDF dan masukkan passphrase untuk membubuhkan tanda tangan digital.
-      </p>
+    <div className="max-w-3xl mx-auto py-10 relative">
+      {/* Background glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl opacity-40"
+        style={{ background: "radial-gradient(circle, rgba(176,141,47,0.2) 0%, transparent 70%)" }}
+      />
+      
+      <div className="text-center mb-10 border-b border-border pb-8">
+        <p className="text-xs font-semibold uppercase tracking-widest text-seal mb-1">Aksi</p>
+        <h1 className="font-serif text-3xl sm:text-4xl font-semibold text-ink mb-3">
+          Tanda Tangani Dokumen
+        </h1>
+        <p className="text-sm sm:text-base text-ink-muted max-w-lg mx-auto">
+          Unggah dokumen PDF dan masukkan passphrase Anda untuk membubuhkan tanda tangan digital secara aman.
+        </p>
+      </div>
 
       <RequireAuth
         title="Masuk untuk menandatangani dokumen"

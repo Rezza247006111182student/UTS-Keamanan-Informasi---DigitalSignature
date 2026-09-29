@@ -46,7 +46,7 @@
 | Baca/scan QR-Code | `jsqr` (npm) |
 | Manipulasi PDF (embed QR ke halaman) | `pdf-lib` (npm) |
 | Unit testing | `vitest` |
-| Ekspor data pengujian ke Excel | `xlsx` (SheetJS) |
+| Ekspor data pengujian ke Excel | `exceljs` (ExcelJS) + `jszip` — ekspor XLSX beserta grafik native Excel. *Disetujui tim pada fase finalisasi sebagai pengganti `xlsx` (SheetJS), karena SheetJS tidak dapat menyisipkan grafik native ke dalam file Excel.* |
 | Deployment | Vercel (Next.js) + Supabase (sudah hosted) |
 
 **Larangan teknis (berlaku untuk SEMUA modul, cek ulang sebelum commit):**

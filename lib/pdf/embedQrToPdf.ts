@@ -31,6 +31,12 @@ export interface EmbedQrOptions {
   height?: number;
   /** Label teks kecil di bawah QR (mis. nama penandatangan). Opsional. */
   label?: string;
+  /**
+   * JSON string payload QR untuk disimpan di Subject metadata PDF.
+   * Jika disediakan, verifikasi bisa membaca langsung dari metadata tanpa
+   * harus mengekstrak ulang gambar PNG (lebih andal).
+   */
+  qrPayloadJson?: string;
 }
 
 /**
@@ -132,7 +138,19 @@ export async function embedQrToPdf(
     });
   }
 
-  // Simpan dan return PDF baru
-  const modifiedPdfBytes = await pdfDoc.save();
+  // Simpan payload QR di Subject metadata PDF
+  // PENTING: encode sebagai base64 karena PEM key mengandung newline
+  // yang membuat pdf-lib meng-encode Subject sebagai hex string (tidak bisa dicari sebagai teks)
+  // Juga gunakan useObjectStreams: false agar Info dictionary tetap sebagai plain text
+  if (options.qrPayloadJson) {
+    const b64Payload = Buffer.from(options.qrPayloadJson).toString("base64");
+    const existingSubject = pdfDoc.getSubject() || "";
+    // Jika sudah ada QR sebelumnya (sequential multi-sign), gabungkan dengan delimiter |
+    const newSubject = existingSubject ? `${existingSubject}|QR-B64:${b64Payload}` : `QR-B64:${b64Payload}`;
+    pdfDoc.setSubject(newSubject);
+  }
+
+  // Simpan dengan useObjectStreams: false agar metadata bisa dicari di raw bytes
+  const modifiedPdfBytes = await pdfDoc.save({ useObjectStreams: false });
   return modifiedPdfBytes;
 }

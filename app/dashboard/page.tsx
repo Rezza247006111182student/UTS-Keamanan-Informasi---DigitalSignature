@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import RequireAuth from "@/lib/auth/RequireAuth";
 import { getAccessToken } from "@/lib/auth/session";
+import { FaFileSignature } from "react-icons/fa6";
 
 // ─── Tipe ─────────────────────────────────────────────────────────────────────
 
@@ -31,18 +32,20 @@ interface DocumentItem {
 // ─── Helper: label & warna status ────────────────────────────────────────────
 
 function StatusBadge({ status }: { status: string }) {
+  // Karena tanda tangan sekarang selalu dilakukan secara sinkron saat pembuatan,
+  // semua dokumen yang ada di dashboard pada dasarnya sudah ditandatangani.
   const map: Record<string, { label: string; cls: string }> = {
     pending: {
-      label: "Menunggu tanda tangan",
-      cls: "bg-[#FEF3C7] text-[#92400E]",
+      label: "Ditandatangani",
+      cls: "bg-valid-bg text-valid",
+    },
+    fully_signed: {
+      label: "Ditandatangani",
+      cls: "bg-valid-bg text-valid",
     },
     partially_signed: {
       label: "Sebagian ditandatangani",
       cls: "bg-[#DBEAFE] text-[#1E40AF]",
-    },
-    fully_signed: {
-      label: "Sudah ditandatangani",
-      cls: "bg-valid-bg text-valid",
     },
     revoked: {
       label: "Dicabut",
@@ -129,20 +132,7 @@ function DashboardContent() {
       <div className="border border-border rounded bg-paper px-8 py-12 text-center">
         {/* Ikon dokumen sederhana */}
         <div className="mx-auto mb-4 w-12 h-12 rounded border-2 border-seal/40 flex items-center justify-center">
-          <svg
-            className="w-6 h-6 text-seal/60"
-            fill="none"
-            stroke="currentColor"
-            viewBox="0 0 24 24"
-            aria-hidden="true"
-          >
-            <path
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              strokeWidth={1.5}
-              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414A1 1 0 0121 9.414V19a2 2 0 01-2 2z"
-            />
-          </svg>
+          <FaFileSignature className="w-6 h-6 text-seal/80" aria-hidden="true" />
         </div>
         <h2 className="font-serif text-lg font-semibold text-ink mb-2">
           Belum ada dokumen ditandatangani
@@ -174,7 +164,7 @@ function DashboardContent() {
               Tanda tangan
             </th>
             <th className="text-left px-4 py-3 font-medium text-ink">Status</th>
-            <th className="px-4 py-3" />
+            <th className="px-4 py-3 text-right font-medium text-ink">Aksi</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border bg-white">
@@ -209,18 +199,20 @@ function DashboardContent() {
 
               {/* Aksi */}
               <td className="px-4 py-4 text-right whitespace-nowrap">
-                <Link
-                  href={`/verify?doc=${doc.id}`}
-                  className="text-xs text-seal hover:underline mr-3"
-                >
-                  Verifikasi
-                </Link>
-                <Link
-                  href={`/sign?doc=${doc.id}`}
-                  className="text-xs text-ink-muted hover:text-ink hover:underline"
-                >
-                  Tambah tanda tangan
-                </Link>
+                {doc.file_path && !doc.file_path.endsWith(".pdf") ? (
+                  // Sementara (bisa diupdate jika file_path valid URL atau storage route)
+                  <span className="text-xs text-ink-muted">Belum tersedia</span>
+                ) : (
+                  <a
+                    href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/documents/${doc.file_path}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-xs text-seal hover:underline font-medium"
+                    download={`${doc.title}-signed.pdf`}
+                  >
+                    Unduh PDF
+                  </a>
+                )}
               </td>
             </tr>
           ))}
@@ -234,22 +226,30 @@ function DashboardContent() {
 
 export default function DashboardPage() {
   return (
-    <div className="max-w-4xl py-6">
+    <div className="max-w-5xl mx-auto py-10 relative">
+      {/* Background glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl opacity-40"
+        style={{ background: "radial-gradient(circle, rgba(176,141,47,0.2) 0%, transparent 70%)" }}
+      />
       {/* Header */}
-      <div className="mb-6 flex items-start justify-between gap-4">
+      <div className="mb-10 flex flex-col sm:flex-row sm:items-end justify-between gap-6 border-b border-border pb-6">
         <div>
-          <h1 className="font-serif text-3xl font-semibold text-ink mb-1">
+          <p className="text-xs font-semibold uppercase tracking-widest text-seal mb-1">Riwayat</p>
+          <h1 className="font-serif text-3xl sm:text-4xl font-semibold text-ink mb-2">
             Dashboard Dokumen
           </h1>
-          <p className="text-sm text-ink-muted">
-            Pantau status tanda tangan digital dokumen Anda.
+          <p className="text-sm sm:text-base text-ink-muted">
+            Pantau status tanda tangan digital dokumen Anda secara real-time.
           </p>
         </div>
         <Link
           href="/sign"
-          className="shrink-0 px-4 py-2 bg-seal hover:bg-seal-dark text-white text-sm font-medium rounded transition-colors"
+          className="shrink-0 inline-flex items-center justify-center px-6 py-3 bg-seal hover:bg-seal-dark text-white text-sm font-semibold rounded-lg transition-all duration-200 hover:shadow-lg hover:shadow-seal/20 active:scale-95"
+          style={{ background: "linear-gradient(135deg, #B08D2F, #8A6E22)" }}
         >
-          Tanda tangani dokumen
+          Tanda tangani dokumen baru
         </Link>
       </div>
 

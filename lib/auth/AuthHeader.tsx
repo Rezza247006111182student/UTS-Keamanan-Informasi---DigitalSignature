@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { FaUser } from "react-icons/fa6";
 import { isSupabaseConfigured, supabase } from "./session";
 
 interface HeaderUser {
@@ -184,8 +185,8 @@ export default function AuthHeader() {
           aria-haspopup="menu"
           aria-expanded={menuOpen}
         >
-          <span className="flex h-7 w-7 items-center justify-center rounded bg-seal text-white text-xs font-semibold">
-            {initial}
+          <span className="flex h-7 w-7 items-center justify-center rounded bg-seal/10 text-seal">
+            <FaUser className="h-4 w-4" />
           </span>
           <span className="hidden sm:inline text-xs text-ink-muted">▾</span>
         </button>

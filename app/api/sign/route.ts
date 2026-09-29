@@ -45,8 +45,8 @@ export async function POST(req: NextRequest) {
 
     let activePrivateKey = "";
     let signerName = (body.signerName as string) || undefined;
-    let signerRole = (body.role as string) || undefined;
-    let signerInstitution = (body.institution as string) || undefined;
+    let signerRole = (body.signerRole as string) || (body.role as string) || undefined;
+    let signerInstitution = (body.signerInstitution as string) || (body.institution as string) || undefined;
 
     // Skenario 1: Private key disediakan langsung
     if (privateKey && typeof privateKey === "string") {

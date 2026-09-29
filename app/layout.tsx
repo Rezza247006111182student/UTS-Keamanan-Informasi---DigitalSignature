@@ -40,7 +40,7 @@ export default function RootLayout({
       lang="id"
       className={`${sourceSerif4.variable} ${ibmPlexSans.variable} ${ibmPlexMono.variable}`}
     >
-      <body className="min-h-screen bg-paper text-ink font-sans antialiased flex flex-col">
+      <body className="min-h-screen bg-paper text-ink font-sans antialiased flex flex-col overflow-x-hidden">
         {/* Header dasar bersama sesuai DESIGN_GUIDE.md Bagian 5 */}
         <header className="border-b border-border bg-paper sticky top-0 z-50">
           <div className="max-w-5xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">

@@ -139,11 +139,19 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="max-w-2xl py-6">
-      <h1 className="text-3xl font-semibold text-ink mb-2">Masuk ke Akun</h1>
-      <p className="text-ink-muted mb-6">
-        Masuk untuk mengakses dashboard dokumen dan kunci digital Anda.
-      </p>
+    <div className="max-w-md mx-auto py-12 relative">
+      {/* Background glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute left-1/2 top-0 -z-10 h-64 w-64 -translate-x-1/2 -translate-y-1/2 rounded-full blur-3xl opacity-50"
+        style={{ background: "radial-gradient(circle, rgba(176,141,47,0.2) 0%, transparent 70%)" }}
+      />
+      <div className="text-center mb-8">
+        <h1 className="text-3xl font-serif font-semibold text-ink mb-2">Masuk ke Akun</h1>
+        <p className="text-ink-muted text-sm">
+          Masuk untuk mengakses dashboard dokumen dan kunci digital Anda.
+        </p>
+      </div>
 
       {errorMessage && (
         <div className="mb-6 p-4 rounded bg-invalid-bg text-invalid border border-invalid/30 text-sm">

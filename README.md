@@ -39,7 +39,7 @@ Aplikasi tanda tangan digital (*digital signature*) untuk dokumen PDF berbasis a
 - **QR-Code Reader / Scanner**: `jsqr`
 - **PDF Manipulation**: `pdf-lib`
 - **Unit Testing**: `vitest`
-- **Benchmark Export**: `xlsx` (SheetJS)
+- **Benchmark Export**: `exceljs` (ExcelJS) + `jszip` — ekspor hasil pengujian ke CSV/XLSX lengkap dengan grafik native Excel (menggantikan `xlsx`/SheetJS yang tidak mendukung penyisipan grafik native)
 
 ---
 
@@ -49,15 +49,15 @@ Aplikasi tanda tangan digital (*digital signature*) untuk dokumen PDF berbasis a
 ├── app/
 │   ├── api/
 │   │   ├── auth/          # Modul B: register, login, logout, setup-key, provision-key
-│   │   ├── documents/     # Modul C: simpan & ambil metadata dokumen
+│   │   ├── documents/     # Modul C: simpan metadata, verify multi-signer, update-path, update-payload
 │   │   ├── keygen/        # Modul A: bangkitkan keypair Ed25519
 │   │   ├── sign/          # Modul A: tanda tangan digital (hash → sign)
 │   │   └── verify/        # Modul A: verifikasi signature
-│   ├── dashboard/         # Modul C: riwayat dokumen user
+│   ├── dashboard/         # Modul C: riwayat dokumen user & fitur unduh PDF dari Supabase Storage
 │   ├── login/             # Modul B: halaman masuk (+ backfill key untuk user lama)
 │   ├── register/          # Modul B: halaman daftar + langsung generate keypair
-│   ├── sign/              # Modul C: form unggah & tanda tangan dokumen
-│   ├── verify/            # Modul C: form verifikasi dokumen & QR
+│   ├── sign/              # Modul C: form unggah, embed QR berlapis (append), & tanda tangan dokumen
+│   ├── verify/            # Modul C: form verifikasi dokumen & auto-convert gambar non-PNG via Canvas API
 │   ├── globals.css        # Token warna, tipografi, dan styling global
 │   ├── layout.tsx         # Root layout bersama (header navigasi)
 │   └── page.tsx           # Halaman beranda
@@ -87,8 +87,8 @@ Skema lengkap ada di [`lib/db/schema.sql`](lib/db/schema.sql). Tiga tabel utama:
 | Tabel | Fungsi |
 |---|---|
 | `public.users` | Profil pengguna, terhubung ke Supabase Auth. Menyimpan `public_key` (PEM) dan `encrypted_private_key` (ciphertext AES-256-GCM — **tidak pernah plaintext**) |
-| `public.documents` | Metadata dokumen PDF: judul, path file di Supabase Storage, hash SHA-256 dokumen asli, dan status penandatanganan (`pending` / `partially_signed` / `fully_signed`) |
-| `public.document_signatures` | Relasi multi-signer — satu dokumen bisa ditandatangani banyak orang. Menyimpan signature base64, snapshot nama/jabatan/institusi signer, dan payload QR |
+| `public.documents` | Metadata dokumen PDF: judul, path file di Supabase Storage (`file_path`), hash SHA-256 dokumen asli, dan status penandatanganan |
+| `public.document_signatures` | Relasi multi-signer — satu dokumen bisa ditandatangani banyak orang. Menyimpan signature base64, snapshot nama/jabatan/institusi signer, dan JSON `qr_payload` utuh |
 
 **Fitur keamanan database:**
 - **Row Level Security (RLS)** aktif di semua tabel — user hanya bisa membaca & mengubah data miliknya sendiri; `encrypted_private_key` tidak pernah bisa dibaca user lain
