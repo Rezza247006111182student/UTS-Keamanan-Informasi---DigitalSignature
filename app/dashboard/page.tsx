@@ -70,6 +70,8 @@ function DashboardContent() {
   const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
 
   useEffect(() => {
     async function fetchDocuments() {
@@ -98,6 +100,30 @@ function DashboardContent() {
 
     fetchDocuments();
   }, []);
+
+  // ── Aksi: unduh PDF via signed URL (bucket private) ───────────────────────
+  async function handleDownload(doc: DocumentItem) {
+    setDownloadingId(doc.id);
+    setDownloadError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(
+        `/api/documents/download?documentId=${encodeURIComponent(doc.id)}`,
+        { headers: token ? { Authorization: `Bearer ${token}` } : {} }
+      );
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.url) {
+        throw new Error(body.error ?? `Gagal membuat tautan unduh (${res.status})`);
+      }
+      // Buka signed URL di tab baru — browser langsung mengunduh
+      // (param `download` sudah diset di sisi server).
+      window.open(body.url, "_blank", "noopener,noreferrer");
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Gagal mengunduh.");
+    } finally {
+      setDownloadingId(null);
+    }
+  }
 
   // ── Loading skeleton ─────────────────────────────────────────────────────
   if (loading) {
@@ -152,7 +178,13 @@ function DashboardContent() {
 
   // ── Tabel dokumen ────────────────────────────────────────────────────────
   return (
-    <div className="border border-border rounded overflow-hidden">
+    <>
+      {downloadError && (
+        <div className="mb-3 border border-invalid/30 rounded bg-invalid-bg px-4 py-2 text-sm text-invalid">
+          {downloadError}
+        </div>
+      )}
+      <div className="border border-border rounded overflow-hidden">
       <table className="w-full text-sm">
         <thead>
           <tr className="bg-paper border-b border-border">
@@ -199,26 +231,25 @@ function DashboardContent() {
 
               {/* Aksi */}
               <td className="px-4 py-4 text-right whitespace-nowrap">
-                {doc.file_path && !doc.file_path.endsWith(".pdf") ? (
-                  // Sementara (bisa diupdate jika file_path valid URL atau storage route)
-                  <span className="text-xs text-ink-muted">Belum tersedia</span>
-                ) : (
-                  <a
-                    href={`${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/public/documents/${doc.file_path}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-xs text-seal hover:underline font-medium"
-                    download={`${doc.title}-signed.pdf`}
+                {doc.file_path ? (
+                  <button
+                    type="button"
+                    onClick={() => handleDownload(doc)}
+                    disabled={downloadingId === doc.id}
+                    className="text-xs text-seal hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                   >
-                    Unduh PDF
-                  </a>
+                    {downloadingId === doc.id ? "Menyiapkan…" : "Unduh PDF"}
+                  </button>
+                ) : (
+                  <span className="text-xs text-ink-muted">Belum tersedia</span>
                 )}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-    </div>
+      </div>
+    </>
   );
 }
 
