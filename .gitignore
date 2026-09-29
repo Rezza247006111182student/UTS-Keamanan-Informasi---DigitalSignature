@@ -6,6 +6,12 @@ node_modules/
 # Testing / Coverage
 coverage/
 
+# Benchmark output — artefak yang bisa digenerate ulang
+# (npx tsx benchmark/runBenchmark.ts).
+# Hanya hasil final terpilih yang di-commit sebagai bukti, via `git add -f`.
+benchmark/results/*
+!benchmark/results/.gitkeep
+
 # Next.js build output
 .next/
 out/
