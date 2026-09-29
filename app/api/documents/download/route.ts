@@ -106,12 +106,15 @@ export async function GET(req: NextRequest) {
 
   if (signError || !signed?.signedUrl) {
     console.error("[GET /api/documents/download] sign error:", signError?.message);
+    const raw = signError?.message ?? "unknown error";
     return NextResponse.json(
       {
         error:
-          signError?.message === "Bucket not found"
+          raw.toLowerCase().includes("bucket not found")
             ? `Bucket '${BUCKET}' belum ada di Supabase Storage.`
-            : "Gagal membuat tautan unduh.",
+            : raw.toLowerCase().includes("not found")
+              ? "File PDF tidak ditemukan di storage — kemungkinan gagal ter-upload. Tanda tangani ulang dokumen ini."
+              : `Gagal membuat tautan unduh: ${raw}`,
       },
       { status: 502 }
     );

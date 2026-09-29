@@ -283,6 +283,50 @@ GRANT SELECT, INSERT, UPDATE ON public.document_signatures TO authenticated;
 -- Sequence & default UUID
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO authenticated;
 
+
+-- =============================================================================
+-- 8. ROW LEVEL SECURITY UNTUK STORAGE (bucket: documents)
+--    Bucket 'documents' bersifat PRIVATE. Tanpa policy di bawah, upload dari
+--    client (anon/authenticated) DITOLAK karena storage.objects tidak punya
+--    policy sama sekali (0 policies) — akibatnya file PDF tidak pernah
+--    tersimpan dan download gagal.
+--
+--    Aturan: setiap user hanya boleh INSERT/SELECT/DELETE objek di dalam
+--    foldernya sendiri, yaitu prefix pertama path = auth.uid()
+--    (sign page menyimpan ke "<user.id>/<documentId>.pdf").
+--
+--    Download tetap dilayani lewat signed URL service-role di
+--    /api/documents/download (service role menembus RLS), jadi tidak perlu
+--    policy SELECT publik.
+-- =============================================================================
+DROP POLICY IF EXISTS storage_documents_owner_insert ON storage.objects;
+CREATE POLICY storage_documents_owner_insert ON storage.objects
+    FOR INSERT
+    TO authenticated
+    WITH CHECK (
+        bucket_id = 'documents'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+DROP POLICY IF EXISTS storage_documents_owner_select ON storage.objects;
+CREATE POLICY storage_documents_owner_select ON storage.objects
+    FOR SELECT
+    TO authenticated
+    USING (
+        bucket_id = 'documents'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+DROP POLICY IF EXISTS storage_documents_owner_delete ON storage.objects;
+CREATE POLICY storage_documents_owner_delete ON storage.objects
+    FOR DELETE
+    TO authenticated
+    USING (
+        bucket_id = 'documents'
+        AND (storage.foldername(name))[1] = auth.uid()::text
+    );
+
+
 -- =============================================================================
 -- CATATAN UNTUK ANGGOTA A & C (BUKAN BAGIAN TUGAS ANGGOTA B)
 -- =============================================================================

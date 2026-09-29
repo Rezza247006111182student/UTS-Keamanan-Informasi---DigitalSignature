@@ -70,6 +70,7 @@ function SignForm() {
   const [stepLabel, setStepLabel] = useState("");
   const [result, setResult] = useState<SignResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [storageWarning, setStorageWarning] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Drag-and-drop handlers
@@ -112,6 +113,7 @@ function SignForm() {
     setStepLabel("Menghitung hash dokumen…");
     setErrorMsg(null);
     setResult(null);
+    setStorageWarning(null);
 
     try {
       // 1. Hash PDF
@@ -219,28 +221,38 @@ function SignForm() {
           }),
         }).catch(() => { /* non-critical */ });
 
-        // Upload signed PDF ke Supabase Storage
+        // Upload signed PDF ke Supabase Storage (bucket private).
+        // Policy storage_documents_owner_* (schema.sql §8) mengizinkan user
+        // meng-upload ke foldernya sendiri. Kalau gagal, JANGAN simpan
+        // file_path — supaya dashboard tidak menampilkan tombol unduh yang mati.
         if (supabase) {
           const storagePath = `${user.id}/${documentId}.pdf`;
-          await supabase.storage
+          const { error: uploadError } = await supabase.storage
             .from("documents")
             .upload(storagePath, new Blob([signedPdfBytes as Uint8Array<ArrayBuffer>], { type: "application/pdf" }), {
               upsert: true,
-            })
-            .catch(() => { /* non-critical, user sudah punya file lokal */ });
+            });
 
-          // Update file_path di tabel documents agar dashboard bisa download
-          await fetch("/api/documents/update-path", {
-            method: "POST",
-            headers: {
-              "Content-Type": "application/json",
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              documentId,
-              filePath: storagePath,
-            }),
-          }).catch(() => { /* non-critical */ });
+          if (uploadError) {
+            console.error("Upload PDF ke storage gagal:", uploadError.message);
+            setStorageWarning(
+              "Dokumen berhasil ditandatangani, tapi arsip online gagal disimpan " +
+                "(" + uploadError.message + "). Unduh PDF di bawah sebelum meninggalkan halaman."
+            );
+          } else {
+            // Update file_path di tabel documents agar dashboard bisa download
+            await fetch("/api/documents/update-path", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                documentId,
+                filePath: storagePath,
+              }),
+            }).catch(() => { /* non-critical */ });
+          }
         }
       }
 
@@ -411,6 +423,13 @@ function SignForm() {
               </p>
             </div>
           </div>
+
+          {/* Peringatan bila arsip online gagal disimpan */}
+          {storageWarning && (
+            <div className="border border-[#B45309]/30 rounded bg-[#FEF3C7] px-5 py-3">
+              <p className="text-sm font-medium text-[#92400E]">{storageWarning}</p>
+            </div>
+          )}
 
           {/* Preview QR */}
           <div className="border border-border rounded bg-paper px-6 py-6 flex flex-col items-center">
