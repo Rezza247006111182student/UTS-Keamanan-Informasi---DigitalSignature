@@ -125,6 +125,36 @@ function DashboardContent() {
     }
   }
 
+  // ── Aksi: hapus dokumen ───────────────────────────────────────────────────
+  async function handleDelete(docId: string) {
+    if (!window.confirm("Apakah Anda yakin ingin menghapus riwayat dokumen ini?")) {
+      return;
+    }
+    
+    setDownloadError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/documents/${docId}`, {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error ?? "Gagal menghapus dokumen");
+      }
+
+      // Sampaikan peringatan bila baris DB terhapus tapi file arsip gagal dihapus
+      const body = await res.json().catch(() => ({}));
+      if (body.storageWarning) {
+        setDownloadError(body.storageWarning);
+      }
+      
+      setDocuments((prev) => prev.filter((d) => d.id !== docId));
+    } catch (err) {
+      setDownloadError(err instanceof Error ? err.message : "Gagal menghapus dokumen.");
+    }
+  }
+
   // ── Loading skeleton ─────────────────────────────────────────────────────
   if (loading) {
     return (
@@ -192,9 +222,6 @@ function DashboardContent() {
             <th className="text-left px-4 py-3 font-medium text-ink hidden sm:table-cell">
               Tanggal
             </th>
-            <th className="text-left px-4 py-3 font-medium text-ink hidden md:table-cell">
-              Tanda tangan
-            </th>
             <th className="text-left px-4 py-3 font-medium text-ink">Status</th>
             <th className="px-4 py-3 text-right font-medium text-ink">Aksi</th>
           </tr>
@@ -219,11 +246,6 @@ function DashboardContent() {
                 })}
               </td>
 
-              {/* Jumlah tanda tangan */}
-              <td className="px-4 py-4 text-ink-muted hidden md:table-cell">
-                {doc.signature_count} penandatangan
-              </td>
-
               {/* Badge status */}
               <td className="px-4 py-4">
                 <StatusBadge status={doc.status} />
@@ -232,14 +254,23 @@ function DashboardContent() {
               {/* Aksi */}
               <td className="px-4 py-4 text-right whitespace-nowrap">
                 {doc.file_path ? (
-                  <button
-                    type="button"
-                    onClick={() => handleDownload(doc)}
-                    disabled={downloadingId === doc.id}
-                    className="text-xs text-seal hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    {downloadingId === doc.id ? "Menyiapkan…" : "Unduh PDF"}
-                  </button>
+                  <div className="flex justify-end gap-3">
+                    <button
+                      type="button"
+                      onClick={() => handleDownload(doc)}
+                      disabled={downloadingId === doc.id}
+                      className="text-xs text-seal hover:underline font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {downloadingId === doc.id ? "Menyiapkan…" : "Unduh PDF"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleDelete(doc.id)}
+                      className="text-xs text-invalid hover:underline font-medium"
+                    >
+                      Hapus
+                    </button>
+                  </div>
                 ) : (
                   <span className="text-xs text-ink-muted">Belum tersedia</span>
                 )}

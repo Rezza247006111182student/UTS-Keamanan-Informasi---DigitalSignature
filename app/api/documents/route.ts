@@ -67,7 +67,8 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Ambil dokumen milik user + jumlah tanda tangan via join
+  // Ambil dokumen milik user + join ke document_signatures via document_hash
+  // agar jumlah signer di multi-sign (dokumen sama, upload berbeda) terhitung benar
   const { data, error } = await supabase
     .from("documents")
     .select(`
@@ -78,8 +79,7 @@ export async function GET(req: NextRequest) {
       created_by,
       status,
       created_at,
-      updated_at,
-      document_signatures ( count )
+      updated_at
     `)
     .eq("created_by", user.id)
     .order("created_at", { ascending: false });
@@ -92,18 +92,8 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Normalkan: ekstrak count dari join ke field signature_count
-  const documents = (data ?? []).map((row) => {
-    const { document_signatures, ...rest } = row as DocumentRow & {
-      document_signatures: { count: number }[];
-    };
-    return {
-      ...rest,
-      signature_count: document_signatures?.[0]?.count ?? 0,
-    };
-  });
-
-  return NextResponse.json({ documents });
+  // Tidak perlu lagi mengambil signature_count karena kolom tersebut telah dihapus di UI
+  return NextResponse.json({ documents: data });
 }
 
 // ─── POST /api/documents ──────────────────────────────────────────────────────

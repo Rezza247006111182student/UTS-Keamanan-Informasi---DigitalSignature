@@ -21,9 +21,9 @@ const INK_COLOR = rgb(0x1b / 255, 0x24 / 255, 0x30 / 255);
 export interface EmbedQrOptions {
   /** Index halaman tujuan (0-based). Default: halaman terakhir. */
   pageIndex?: number;
-  /** Posisi X pojok kiri bawah QR (pt). Default: pojok kanan bawah dengan margin. */
+  /** Posisi X pojok kiri bawah QR (pt). Default: dihitung otomatis per slot. */
   x?: number;
-  /** Posisi Y pojok kiri bawah QR (pt). Default: pojok kanan bawah dengan margin. */
+  /** Posisi Y pojok kiri bawah QR (pt). Default: margin bawah. */
   y?: number;
   /** Lebar QR dalam pt. Default: 90. */
   width?: number;
@@ -37,6 +37,29 @@ export interface EmbedQrOptions {
    * harus mengekstrak ulang gambar PNG (lebih andal).
    */
   qrPayloadJson?: string;
+  /**
+   * Nomor penandatangan saat ini (1-based). Default: dihitung dari jumlah
+   * payload yang sudah ada di Subject + 1. Menentukan slot QR berikutnya
+   * dalam baris; bila baris penuh, halaman lanjutan otomatis dibuat.
+   */
+  signerIndex?: number;
+}
+
+// Hitung jumlah penandatangan yang sudah tercatat di Subject (dedupe via signature)
+function countSignersInSubject(subject: string): number {
+  const seen = new Set<string>();
+  for (const part of subject.split("|")) {
+    if (!part.startsWith("QR-B64:")) continue;
+    try {
+      const parsed = JSON.parse(Buffer.from(part.slice("QR-B64:".length), "base64").toString("utf-8"));
+      for (const item of Array.isArray(parsed) ? parsed : [parsed]) {
+        if (item && typeof item.signature === "string") seen.add(item.signature);
+      }
+    } catch {
+      // segmen rusak diabaikan
+    }
+  }
+  return seen.size;
 }
 
 /**
@@ -84,30 +107,77 @@ export async function embedQrToPdf(
   // Margin dari tepi halaman (24pt ≈ 8.5mm)
   const margin = 24;
 
-  // Posisi pojok kiri bawah QR — default: pojok kanan bawah
-  const qrX = options.x ?? pageWidth - qrSize - margin;
-  const qrY = options.y ?? margin;
+  // Meta Subject saat ini: jumlah penandatangan & halaman lanjutan QR yang sudah ada
+  const existingSubject = pdfDoc.getSubject() || "";
+  const signerIndex = options.signerIndex ?? (countSignersInSubject(existingSubject) + 1);
+  const slot = Math.max(0, signerIndex - 1); // 0-based
+
+  const qrPagesMatch = existingSubject.match(/QR-PG:(\d+)/);
+  const existingQrPages = qrPagesMatch ? parseInt(qrPagesMatch[1], 10) : 0;
+
+  const gap = 12;
+  const origPages = pdfDoc.getPages();
+  const lastOrigPage = origPages[origPages.length - 1 - existingQrPages];
+  const { width: refWidth } = lastOrigPage.getSize();
+
+  // Berapa QR yang muat dalam satu baris pada lebar halaman
+  const cols = Math.max(1, Math.floor((refWidth - margin * 2 + gap) / (qrSize + gap)));
+  const rowIndex = Math.floor(slot / cols); // 0 = baris di halaman asli; >=1 = halaman lanjutan
+  const neededContPages = Math.max(0, rowIndex);
+
+  // Tentukan halaman target; buat halaman lanjutan bila diperlukan (ukuran sama dengan halaman terakhir)
+  let targetPage = lastOrigPage;
+  let newQrPages = existingQrPages;
+  if (neededContPages > 0) {
+    const origCount = origPages.length - existingQrPages;
+    for (let k = existingQrPages; k < neededContPages; k++) {
+      const size = lastOrigPage.getSize();
+      pdfDoc.addPage([size.width, size.height]);
+    }
+    newQrPages = Math.max(existingQrPages, neededContPages);
+    targetPage = pdfDoc.getPage(origCount + rowIndex - 1);
+  }
+
+  const { width: targetWidth } = targetPage.getSize();
+  const col = slot % cols;
+
+  // Slot diatur dari kanan ke kiri agar konsisten dengan posisi default dulu
+  const defaultX = targetWidth - margin - qrSize - col * (qrSize + gap);
+  const defaultY = margin;
+  const qrX = options.x ?? defaultX;
+  const qrY = options.y ?? defaultY;
+
+  // Header kecil pada halaman lanjutan (di baris pertamanya saja)
+  if (neededContPages > 0 && col === 0 && targetPage !== lastOrigPage) {
+    const hFont = await pdfDoc.embedFont(StandardFonts.Helvetica);
+    targetPage.drawText("Halaman lanjutan meterai tanda tangan digital", {
+      x: margin,
+      y: targetPage.getSize().height - margin - 10,
+      size: 8,
+      font: hFont,
+      color: INK_COLOR,
+    });
+  }
 
   // Embed gambar PNG ke dalam dokumen
   const qrImage = await pdfDoc.embedPng(qrPngBytes);
 
   // --- Gambar border seal di sekitar QR ---
-  // Border adalah rectangle sedikit lebih besar dari QR (padding 4pt di tiap sisi)
   const borderPadding = 4;
-  const borderThickness = 1.5; // pt, hairline sesuai DESIGN_GUIDE
+  const borderThickness = 1.5;
 
-  page.drawRectangle({
+  targetPage.drawRectangle({
     x: qrX - borderPadding,
     y: qrY - borderPadding,
     width: qrSize + borderPadding * 2,
     height: qrHeight + borderPadding * 2,
     borderColor: SEAL_COLOR,
     borderWidth: borderThickness,
-    // Tidak ada fill — transparan, sesuai prinsip DESIGN_GUIDE (no decorative shadow/fill)
+    color: rgb(1, 1, 1),
   });
 
   // --- Gambar gambar QR di atas border ---
-  page.drawImage(qrImage, {
+  targetPage.drawImage(qrImage, {
     x: qrX,
     y: qrY,
     width: qrSize,
@@ -117,10 +187,9 @@ export async function embedQrToPdf(
   // --- Label teks opsional di bawah QR ---
   if (options.label && options.label.trim() !== "") {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    const fontSize = 6; // pt — sangat kecil, hanya sebagai keterangan
+    const fontSize = 6; 
     const labelText = options.label.trim();
 
-    // Potong label kalau terlalu panjang supaya tidak keluar dari area QR
     const maxWidth = qrSize + borderPadding * 2;
     const textWidth = font.widthOfTextAtSize(labelText, fontSize);
     const displayText =
@@ -128,9 +197,9 @@ export async function embedQrToPdf(
         ? labelText.slice(0, Math.floor((maxWidth / textWidth) * labelText.length) - 1) + "…"
         : labelText;
 
-    page.drawText(displayText, {
+    targetPage.drawText(displayText, {
       x: qrX - borderPadding,
-      y: qrY - borderPadding - fontSize - 3, // 3pt gap di bawah border
+      y: qrY - borderPadding - fontSize - 3,
       size: fontSize,
       font,
       color: INK_COLOR,
@@ -141,13 +210,17 @@ export async function embedQrToPdf(
   // Simpan payload QR di Subject metadata PDF
   // PENTING: encode sebagai base64 karena PEM key mengandung newline
   // yang membuat pdf-lib meng-encode Subject sebagai hex string (tidak bisa dicari sebagai teks)
-  // Juga gunakan useObjectStreams: false agar Info dictionary tetap sebagai plain text
+  // Juga gunakan useObjectStreams: false agar Info dictionary tetap sebagai plain text.
+  // Subject SELALU diganti dengan snapshot array lengkap seluruh penandatangan
+  // (penumpukan segmen menyebabkan payload duplikat saat verifikasi). Jumlah halaman
+  // lanjutan QR dicatat sebagai segmen QR-PG:<n> yang diabaikan pembaca payload.
   if (options.qrPayloadJson) {
     const b64Payload = Buffer.from(options.qrPayloadJson).toString("base64");
-    const existingSubject = pdfDoc.getSubject() || "";
-    // Jika sudah ada QR sebelumnya (sequential multi-sign), gabungkan dengan delimiter |
-    const newSubject = existingSubject ? `${existingSubject}|QR-B64:${b64Payload}` : `QR-B64:${b64Payload}`;
-    pdfDoc.setSubject(newSubject);
+    const qrPagesSuffix = newQrPages > 0 ? `|QR-PG:${newQrPages}` : "";
+    pdfDoc.setSubject(`QR-B64:${b64Payload}${qrPagesSuffix}`);
+  } else if (newQrPages > 0) {
+    const stripped = existingSubject.replace(/\|QR-PG:\d+/g, "");
+    pdfDoc.setSubject(`${stripped}|QR-PG:${newQrPages}`);
   }
 
   // Simpan dengan useObjectStreams: false agar metadata bisa dicari di raw bytes

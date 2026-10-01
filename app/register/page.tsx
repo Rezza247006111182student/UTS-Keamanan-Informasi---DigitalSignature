@@ -123,7 +123,7 @@ export default function RegisterPage() {
         setPassphrase("");
         setConfirmPassphrase("");
         setTimeout(() => {
-          router.push("/login");
+          router.push("/dashboard");
         }, 2000);
       } else {
         setSuccessMessage(

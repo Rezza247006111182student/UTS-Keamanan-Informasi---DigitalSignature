@@ -16,6 +16,7 @@ export interface QrPayloadData {
   role: string;         // jabatan/peran penandatangan
   date: string;         // tanggal tanda tangan (ISO 8601, contoh: "2024-01-15")
   institution: string;  // nama institusi/organisasi penandatangan
+  documentHash?: string; // SHA-256 hash dokumen — opsional, untuk multi-sign lookup
 }
 
 /**
@@ -27,8 +28,10 @@ export interface QrPayloadData {
  * Dipanggil dari: app/sign/page.tsx, app/api/documents/route.ts
  * Dipakai juga oleh: embedQrToPdf (lewat konversi buffer)
  */
-export async function generateQrPayload(data: QrPayloadData): Promise<string> {
-  // Validasi: semua field wajib harus terisi
+export async function generateQrPayload(data: QrPayloadData | QrPayloadData[]): Promise<string> {
+  const dataArray = Array.isArray(data) ? data : [data];
+
+  // Validasi: semua field wajib harus terisi untuk setiap payload
   const requiredFields: (keyof QrPayloadData)[] = [
     "signature",
     "publicKey",
@@ -38,24 +41,27 @@ export async function generateQrPayload(data: QrPayloadData): Promise<string> {
     "institution",
   ];
 
-  for (const field of requiredFields) {
-    if (!data[field] || typeof data[field] !== "string" || data[field].trim() === "") {
-      throw new Error(`generateQrPayload: field "${field}" wajib diisi dan tidak boleh kosong`);
+  for (const item of dataArray) {
+    for (const field of requiredFields) {
+      if (!item[field] || typeof item[field] !== "string" || item[field].trim() === "") {
+        throw new Error(`generateQrPayload: field "${field}" wajib diisi dan tidak boleh kosong`);
+      }
     }
   }
 
-  // Encode payload sebagai JSON string (format disepakati di CONTRACT.md)
-  const jsonPayload = JSON.stringify(data);
+  // Encode payload sebagai JSON string
+  const jsonPayload = JSON.stringify(Array.isArray(data) ? data : data);
 
   // Generate QR-Code sebagai base64 Data URL PNG
-  // Error correction level "M" (15%) — keseimbangan antara keterbacaan dan ketahanan
+  // Error correction level L untuk memaksimalkan kapasitas data teks panjang (multi-sign)
+  // Width 512px agar modul QR tetap besar meski payload panjang (scanner/screenshot tidak pecah)
   const dataUrl = await QRCode.toDataURL(jsonPayload, {
-    errorCorrectionLevel: "M",
+    errorCorrectionLevel: "L",
     margin: 2,
-    width: 256,
+    width: 512,
     color: {
-      dark: "#1B2430",   // --color-ink: warna modul QR (sesuai DESIGN_GUIDE token)
-      light: "#FAF8F2",  // --color-paper: latar belakang QR
+      dark: "#1B2430",   // --color-ink
+      light: "#FAF8F2",  // --color-paper
     },
   });
 

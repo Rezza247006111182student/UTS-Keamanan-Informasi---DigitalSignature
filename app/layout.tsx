@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Source_Serif_4, IBM_Plex_Sans, IBM_Plex_Mono } from "next/font/google";
 import Link from "next/link";
 import AuthHeader from "@/lib/auth/AuthHeader";
+import NavLinks from "@/lib/auth/NavLinks";
 import "./globals.css";
 
 const sourceSerif4 = Source_Serif_4({
@@ -50,26 +51,7 @@ export default function RootLayout({
                   Natural<span className="text-seal">Sign</span>
                 </span>
               </Link>
-              <nav className="hidden md:flex items-center space-x-6 text-sm text-ink-muted">
-                <Link
-                  href="/dashboard"
-                  className="hover:text-ink transition-colors"
-                >
-                  Dashboard
-                </Link>
-                <Link
-                  href="/sign"
-                  className="hover:text-ink transition-colors"
-                >
-                  Tanda Tangani
-                </Link>
-                <Link
-                  href="/verify"
-                  className="hover:text-ink transition-colors"
-                >
-                  Verifikasi
-                </Link>
-              </nav>
+              <NavLinks />
             </div>
             <AuthHeader />
           </div>

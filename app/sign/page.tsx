@@ -119,15 +119,76 @@ function SignForm() {
       // 1. Hash PDF
       const { hex: docHash, buffer: pdfBuffer } = await hashFileSHA256(file);
 
-      // 2. Ambil user + encrypted_private_key (field ini tidak ada di getCurrentUser)
+      // Ekstrak rootHash dan existingPayloads dari Subject PDF jika dokumen sudah pernah ditandatangani
+      let rootHash = docHash;
+      let existingPayloads: any[] = [];
+      const seenSignatures = new Set<string>();
+      try {
+        const { PDFDocument } = await import("pdf-lib");
+        const pdfDoc = await PDFDocument.load(pdfBuffer);
+        const subject = pdfDoc.getSubject() || "";
+        const parts = subject.split("|");
+        for (const part of parts) {
+          if (part.startsWith("QR-B64:")) {
+            try {
+              const b64Str = part.slice("QR-B64:".length);
+              const jsonStr = Buffer.from(b64Str, "base64").toString("utf-8");
+              const parsed = JSON.parse(jsonStr);
+              // Satu segmen bisa berisi objek tunggal ATAU array payload lama;
+              // dedupe via signature agar payload yang tertumpuk di Subject lama tidak dihitung dua kali
+              const items = Array.isArray(parsed) ? parsed : [parsed];
+              for (const item of items) {
+                if (item && typeof item.signature === "string" && !seenSignatures.has(item.signature)) {
+                  seenSignatures.add(item.signature);
+                  existingPayloads.push(item);
+                  if (item.documentHash && rootHash === docHash) rootHash = item.documentHash;
+                }
+              }
+            } catch (e) {}
+          }
+        }
+      } catch (e) {
+        console.warn("Gagal membaca rootHash dari PDF", e);
+      }
+
+      // 2. Ambil user + encrypted_private_key
       const user = await getCurrentUser();
       if (!user) throw new Error("Sesi habis. Muat ulang halaman dan masuk kembali.");
 
       const encryptedPrivateKey = await fetchEncryptedPrivateKey(user.id);
-
-      // 3. Simpan metadata dokumen ke DB DULU agar kita punya documentId
-      // yang akan dipakai oleh /api/sign untuk mencatat signature ke tabel document_signatures
       const token = await getAccessToken();
+
+      // 3. POST /api/sign DULU (sebelum simpan ke DB)
+      // Kalau passphrase salah, tidak ada rekam jejak di dashboard
+      setStep("signing");
+      setStepLabel("Menandatangani dokumen…");
+
+      const signRes = await fetch("/api/sign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({
+          hash: docHash,
+          encryptedPrivateKey,
+          passphrase,
+          signerName: user.fullName,
+          signerRole: user.role,
+          signerInstitution: user.institution,
+          // documentId belum ada — akan dikirim via update-payload setelah dokumen dibuat
+        }),
+      });
+
+      if (!signRes.ok) {
+        const body = await signRes.json().catch(() => ({}));
+        throw new Error(body.error ?? `Tanda tangan gagal (${signRes.status})`);
+      }
+
+      const { signature } = await signRes.json();
+
+      // 4. Sign berhasil → baru simpan metadata dokumen ke DB
+      setStepLabel("Menyimpan metadata dokumen…");
       const docRes = await fetch("/api/documents", {
         method: "POST",
         headers: {
@@ -148,36 +209,24 @@ function SignForm() {
         throw new Error(docBody.error ?? "Gagal menyimpan dokumen ke database.");
       }
 
-      // 4. POST /api/sign (Modul A) — kirim hash + encryptedPrivateKey + passphrase + documentId
-      // Modul A yang dekripsi private key (via Modul B), lakukan sign, dan simpan ke document_signatures
-      setStep("signing");
-      setStepLabel("Menandatangani dokumen…");
-
-      const signRes = await fetch("/api/sign", {
+      // 5. Catat signature ke document_signatures dengan documentId yang baru
+      await fetch("/api/documents/record-signature", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
         body: JSON.stringify({
-          hash: docHash,
-          encryptedPrivateKey,
-          passphrase,
           documentId,
+          signature,
           signerName: user.fullName,
           signerRole: user.role,
           signerInstitution: user.institution,
+          rootHash: rootHash !== docHash ? rootHash : undefined,
         }),
-      });
+      }).catch(() => { /* non-critical, akan muncul tanpa nama saja */ });
 
-      if (!signRes.ok) {
-        const body = await signRes.json().catch(() => ({}));
-        throw new Error(body.error ?? `Tanda tangan gagal (${signRes.status})`);
-      }
-
-      const { signature } = await signRes.json();
-
-      // 5. Generate QR
+      // 6. Generate QR — sertakan documentHash agar QR scan bisa ambil semua signer dari DB
       setStep("generating_qr");
       setStepLabel("Membuat QR-Code meterai…");
 
@@ -189,26 +238,34 @@ function SignForm() {
         role: user.role ?? "Signer",
         date: now,
         institution: user.institution ?? "",
+        documentHash: docHash,
       };
-      const qrJsonPayload = JSON.stringify(qrData);
-      const qrDataUrl = await generateQrPayload(qrData);
+      
+      // Gabungkan dengan payload sebelumnya untuk metadata Subject (sumber verifikasi lengkap).
+      // QR web (preview + unduh) memuat ARRAY SELURUH penandatangan seperti semula;
+      // QR yang dicetak ke PDF cukup payload penandatangan ini saja agar berjajar & mudah dipindai.
+      const finalPayload = existingPayloads.length > 0 ? [...existingPayloads, qrData] : qrData;
+      const qrJsonPayload = JSON.stringify(finalPayload);
+      const qrDataUrl = await generateQrPayload(finalPayload);
+      const qrStampDataUrl = await generateQrPayload(qrData);
 
-      // 6. Embed QR ke PDF
+      // 7. Embed QR ke PDF
       setStep("embedding");
       setStepLabel("Menyematkan QR ke PDF…");
 
       const pdfBytes = new Uint8Array(pdfBuffer);
-      const qrPngBytes = dataUrlToBuffer(qrDataUrl);
+      const qrPngBytes = dataUrlToBuffer(qrStampDataUrl);
       const signedPdfBytes = await embedQrToPdf(pdfBytes, qrPngBytes, {
         label: user.fullName,
         qrPayloadJson: qrJsonPayload,
+        signerIndex: existingPayloads.length + 1,
       });
 
-      // 7. Update qr_payload di DB + upload PDF ke Supabase Storage
+      // 8. Update qr_payload di DB + upload PDF ke Supabase Storage
       setStepLabel("Menyimpan dokumen…");
 
-      // Update qr_payload di document_signatures
       if (token && documentId) {
+        // Update qr_payload di document_signatures
         await fetch("/api/documents/update-payload", {
           method: "POST",
           headers: {
@@ -221,10 +278,6 @@ function SignForm() {
           }),
         }).catch(() => { /* non-critical */ });
 
-        // Upload signed PDF ke Supabase Storage (bucket private).
-        // Policy storage_documents_owner_* (schema.sql §8) mengizinkan user
-        // meng-upload ke foldernya sendiri. Kalau gagal, JANGAN simpan
-        // file_path — supaya dashboard tidak menampilkan tombol unduh yang mati.
         if (supabase) {
           const storagePath = `${user.id}/${documentId}.pdf`;
           const { error: uploadError } = await supabase.storage
@@ -240,7 +293,6 @@ function SignForm() {
                 "(" + uploadError.message + "). Unduh PDF di bawah sebelum meninggalkan halaman."
             );
           } else {
-            // Update file_path di tabel documents agar dashboard bisa download
             await fetch("/api/documents/update-path", {
               method: "POST",
               headers: {
@@ -448,7 +500,8 @@ function SignForm() {
               />
             </div>
             <p className="text-xs text-ink-muted mt-3">
-              Scan QR ini di halaman Verifikasi untuk membuktikan keaslian dokumen.
+              Scan QR ini di halaman Verifikasi untuk membuktikan keaslian tanda tangan Anda.
+              Seluruh penandatangan dokumen tetap terbaca saat memverifikasi file PDF-nya.
             </p>
           </div>
 
@@ -459,6 +512,18 @@ function SignForm() {
               className="px-6 py-2.5 bg-seal hover:bg-seal-dark text-white text-sm font-medium rounded transition-colors"
             >
               Unduh PDF bertanda tangan
+            </button>
+            <button
+              onClick={() => {
+                if (!result) return;
+                const a = document.createElement("a");
+                a.href = result.qrDataUrl;
+                a.download = `qr_${file ? file.name.replace(/\.pdf$/i, "") : "dokumen"}.png`;
+                a.click();
+              }}
+              className="px-6 py-2.5 border border-seal text-seal hover:bg-seal/5 text-sm font-medium rounded transition-colors"
+            >
+              Unduh Gambar QR
             </button>
             <button
               onClick={() => {
